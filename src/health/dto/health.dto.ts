@@ -10,6 +10,9 @@ export class HealthDto {
   @ApiProperty({ example: 'up', enum: ['up', 'down'] })
   redis!: 'up' | 'down';
 
+  @ApiProperty({ example: 'up', enum: ['up', 'down'], description: 'MinIO / S3' })
+  storage!: 'up' | 'down';
+
   @ApiProperty({ example: 12 })
   uptimeSec!: number;
 

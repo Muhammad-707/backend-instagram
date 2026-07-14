@@ -8,7 +8,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ig_password}
       POSTGRES_DB: ${POSTGRES_DB:-instagram}
     ports:
-      - '5432:5432'
+      # 5432 на хосте занят локальной установкой PostgreSQL — публикуем на 5433.
+      - '${POSTGRES_HOST_PORT:-5433}:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

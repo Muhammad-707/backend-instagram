@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { StorageService } from '../storage/storage.service';
 import { HealthDto } from './dto/health.dto';
 
 @ApiTags('health')
@@ -10,20 +11,23 @@ export class HealthController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly storage: StorageService,
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'Проверка API, БД и Redis' })
+  @ApiOperation({ summary: 'Проверка API, БД, Redis и MinIO' })
   @ApiOkResponse({ type: HealthDto })
   async check(): Promise<HealthDto> {
-    const [db, cache] = await Promise.all([
+    const [db, cache, files] = await Promise.all([
       this.safe(() => this.prisma.ping()),
       this.safe(() => this.redis.ping()),
+      this.safe(() => this.storage.ping()),
     ]);
     return {
-      status: db && cache ? 'ok' : 'degraded',
+      status: db && cache && files ? 'ok' : 'degraded',
       database: db ? 'up' : 'down',
       redis: cache ? 'up' : 'down',
+      storage: files ? 'up' : 'down',
       uptimeSec: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     };
