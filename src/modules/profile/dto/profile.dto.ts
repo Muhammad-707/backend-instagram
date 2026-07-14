@@ -1,0 +1,238 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Gender } from '@prisma/client';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUrl,
+  MaxLength,
+} from 'class-validator';
+import { CursorDto } from '../../../common/pagination/cursor.dto';
+
+export class UpdateProfileDto {
+  @ApiPropertyOptional({ example: 'Фотограф из Душанбе', maxLength: 150 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150, { message: 'about: максимум 150 символов' })
+  about?: string;
+
+  @ApiPropertyOptional({ example: 'https://eraj.dev' })
+  @IsOptional()
+  @IsUrl({}, { message: 'website: некорректная ссылка' })
+  website?: string;
+
+  @ApiPropertyOptional({
+    enum: Gender,
+    example: Gender.MALE,
+    description: 'Симметричный enum: что отправили — то и вернётся (баг softclub #12)',
+  })
+  @IsOptional()
+  @IsEnum(Gender, { message: 'gender: MALE | FEMALE | OTHER | HIDDEN' })
+  gender?: Gender;
+
+  @ApiPropertyOptional({ example: 'Фотограф' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  occupation?: string;
+
+  @ApiPropertyOptional({ example: '2000-05-17' })
+  @IsOptional()
+  @IsDateString({}, { message: 'dob: дата в формате YYYY-MM-DD' })
+  dob?: string;
+
+  @ApiPropertyOptional({ example: 1, description: 'id локации' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  locationId?: number;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  showThreadsBadge?: boolean;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  isAiAuthor?: boolean;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  showAccountSuggestions?: boolean;
+
+  @ApiPropertyOptional({ example: 'Eraj Karimov', description: 'Имя и фамилия' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  fullName?: string;
+}
+
+export class UpdatePrivacyDto {
+  @ApiProperty({ example: true, description: 'true — закрытый аккаунт' })
+  @IsBoolean()
+  isPrivate!: boolean;
+}
+
+export class ActivityQueryDto extends CursorDto {
+  @ApiPropertyOptional({ example: '2026-07-01', description: 'Фильтр: не раньше этой даты' })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-07-31', description: 'Фильтр: не позже этой даты' })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+}
+
+// ─────────────── ответы ───────────────
+
+export class ProfileDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty({ example: 'eraj' })
+  userName!: string;
+
+  @ApiProperty({ example: 'Eraj Karimov' })
+  fullName!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  avatarUrl?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, maxLength: 150 })
+  about?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  website?: string | null;
+
+  @ApiProperty({ enum: Gender, example: Gender.HIDDEN })
+  gender!: Gender;
+
+  @ApiPropertyOptional({ nullable: true })
+  occupation?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  dob?: Date | null;
+
+  @ApiProperty({ example: false })
+  showThreadsBadge!: boolean;
+
+  @ApiProperty({ example: false })
+  isAiAuthor!: boolean;
+
+  @ApiProperty({ example: true })
+  showAccountSuggestions!: boolean;
+
+  @ApiProperty({ example: false })
+  isPrivate!: boolean;
+
+  @ApiProperty({ example: false })
+  isVerified!: boolean;
+
+  @ApiProperty({ example: 42 })
+  postsCount!: number;
+
+  @ApiProperty({ example: 128 })
+  followersCount!: number;
+
+  @ApiProperty({ example: 97 })
+  followingCount!: number;
+}
+
+/** Чужой профиль — те же поля + отношения между мной и им. */
+export class OtherProfileDto extends ProfileDto {
+  @ApiProperty({ example: false, description: 'Я подписан на него' })
+  isFollowing!: boolean;
+
+  @ApiProperty({ example: false, description: 'Он подписан на меня' })
+  isFollowedBy!: boolean;
+
+  @ApiProperty({ example: false, description: 'Я его заблокировал' })
+  isBlocked!: boolean;
+
+  @ApiProperty({ example: false, description: 'Моя заявка на подписку ждёт подтверждения' })
+  hasRequestPending!: boolean;
+
+  @ApiProperty({
+    example: true,
+    description: 'Виден ли контент: у закрытого аккаунта — только принятым подписчикам',
+  })
+  canViewContent!: boolean;
+}
+
+export class IsFollowingDto {
+  @ApiProperty({ example: true })
+  isFollowing!: boolean;
+
+  @ApiProperty({ example: false })
+  hasRequestPending!: boolean;
+}
+
+export class PostBriefDto {
+  @ApiProperty({ example: 12 })
+  id!: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  caption?: string | null;
+
+  @ApiProperty({ example: false })
+  isReel!: boolean;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Первое медиа — обложка в сетке' })
+  coverUrl?: string | null;
+
+  @ApiProperty({ example: 24 })
+  likesCount!: number;
+
+  @ApiProperty({ example: 3 })
+  commentsCount!: number;
+
+  @ApiProperty()
+  createdAt!: Date;
+}
+
+export class MusicBriefDto {
+  @ApiProperty({ example: 7 })
+  id!: number;
+
+  @ApiProperty({ example: 'Blinding Lights' })
+  title!: string;
+
+  @ApiProperty({ example: 'The Weeknd' })
+  artist!: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  coverUrl?: string | null;
+
+  @ApiProperty()
+  savedAt!: Date;
+}
+
+export class ActivityItemDto {
+  @ApiProperty({
+    enum: ['LIKE', 'COMMENT', 'POST_VIEW', 'SEARCH'],
+    example: 'LIKE',
+  })
+  type!: 'LIKE' | 'COMMENT' | 'POST_VIEW' | 'SEARCH';
+
+  @ApiProperty({ example: '2026-07-15T10:00:00.000Z' })
+  at!: Date;
+
+  @ApiPropertyOptional({ example: 12, description: 'id поста — для LIKE / COMMENT / POST_VIEW' })
+  postId?: number;
+
+  @ApiPropertyOptional({ description: 'Текст — для COMMENT и SEARCH' })
+  text?: string;
+}
+
+export class AvatarDto {
+  @ApiPropertyOptional({ nullable: true, description: 'null после удаления' })
+  avatarUrl?: string | null;
+}

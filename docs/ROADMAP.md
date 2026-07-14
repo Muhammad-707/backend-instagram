@@ -122,12 +122,45 @@
 > - Смена пароля (и reset, и change) **отзывает все refresh-сессии** — украденный токен перестаёт работать.
 
 ## Фаза 4 — Users, Profile, Follow, Privacy, Block, Close Friends (39 endpoints)
-- [ ] Users: поиск (по userName **и** fullName, substring), 8 endpoint'ов истории поиска (с `createdAt`!), `suggestions` (+ `followedBy`), `DELETE /users/me` (soft-delete 30 дней)
-- [ ] Profile: `me`, `:userId` (+ `isFollowing/isFollowedBy/isBlocked/isPrivate/hasRequestPending`), `PUT /profile` (about, **website**, gender enum, occupation, showThreadsBadge, isAiAuthor, showAccountSuggestions), аватар upload/delete (**delete НЕ ломает login**), posts/reels/tagged/reposts/favorites/saved-music, `PUT /profile/privacy`, `GET /profile/me/activity` («Ваши действия»)
+Разбита на две сессии: **4а — Users + Profile (26)** · **4б — Follow + Block + Close Friends (13)**.
+
+### Фаза 4а — Users + Profile (26 endpoints) ✅
+- [x] Users: поиск (по userName **и** fullName, substring, курсорная пагинация), 8 endpoint'ов истории поиска (**с `createdAt`**), `suggestions` (+ `followedBy`), `DELETE /users/me` (soft-delete 30 дней), `POST /users/:id/report`
+- [x] Profile: `me`, `:userId` (+ `isFollowing/isFollowedBy/isBlocked/isPrivate/hasRequestPending/canViewContent`), `PUT /profile` (about ≤150, **website**, gender enum, occupation, dob, showThreadsBadge, isAiAuthor, showAccountSuggestions), аватар upload/delete (**delete НЕ ломает login**), posts/reels/tagged/reposts/favorites/saved-music, `PUT /profile/privacy`, `GET /profile/me/activity` («Ваши действия»)
+- [x] `AccessService` — единая точка правды по блокировкам и приватности (в 4б станет основой `BlockGuard` / `PrivacyGuard`)
+
+**Проверено живыми запросами (два аккаунта: `eraj` публичный, `nodira` приватная):**
+- Поиск `q=er` → нашёл `eraj`, am**er**ika, chessmast**er**, dal**er**, sh**er**zod — **substring в userName И fullName**, регистронезависимо (ТЗ §11)
+- **Пагинация: страница 1 ≠ страница 2** (`limit=3` + `cursor`) — баг softclub #4 не повторён
+- История поиска: все 8 endpoint'ов, **`createdAt` в каждом ответе** (баг softclub #19); повторный клик по профилю **не плодит строки** (upsert поднимает наверх); удаление чужой записи → `404`
+- UTF-8 round-trip проверен: «закат в горах» сохраняется и возвращается **посимвольно точно**
+- `suggestions` → `photolab (followedBy: m.ibrohim, chessmaster · 4)` — второй круг подписок работает
+- `PUT /profile`: отправили `gender: MALE` → вернулся **`MALE`** (симметричный enum, баг softclub #12); `about` 200 симв. → `400`
+- **Приватность:** `eraj` → профиль `nodira` виден (`canViewContent: false`), но `/posts` и `/reels` → **`403`**; после `PENDING → ACCEPTED` → **`200`, 5 постов видны**; свой контент виден всегда
+- **Блокировка:** `403` **в обе стороны**, заблокированный **исчезает из поиска** (найдено 0) и **из рекомендаций**
+- **Аватар:** upload → файл реально отдаётся (`200 image/webp`) → **DELETE → логин ВСЁ ЕЩЁ РАБОТАЕТ (`200`)** (баг softclub #2 не повторён), старый файл удалён из S3 (`404`), повторный DELETE идемпотентен
+- Вкладки на реальных данных: `favorites` 2 · `reposts` 2 · `saved-music` 3 трека · `tagged` 2 · `activity` (LIKE/SEARCH, по времени)
+- `DELETE /users/me` → `200`, логин → `401`, старый токен → `401`, **строка в БД цела** (`isDeleted=true`)
+- Жалоба на себя → `400` · Swagger: **users 12 + profile 14 = 26** · `build` · `lint` · `prisma validate` → зелёные
+
+> **Заметки Фазы 4а:**
+> - **`AccessService` вместо копипасты проверок.** Блокировки и приватность нужны users, profile, а дальше posts, stories, chat.
+>   Одна точка правды: `isBlockedBetween`, `blockedIds`, `canViewContent`. В 4б поверх встанут guard'ы.
+> - **Блокировка симметрична по последствиям**: неважно, кто кого заблокировал — контент скрыт обоим (как в IG).
+> - **Профиль приватного аккаунта виден всем** (аватар, счётчики), закрыт именно **контент** — так в реальном IG,
+>   иначе нельзя было бы нажать «Подписаться».
+> - **Репост = `Share`**: модели `Repost` в схеме нет, `GET /profile/me/reposts` отдаёт посты, которые я расшарил.
+> - **`DELETE /profile/avatar` трогает ровно одно поле** `Profile.avatarUrl`. Ни `User`, ни `passwordHash`, ни сам
+>   `Profile` не удаляются — логин сломаться физически не может (баг softclub #2).
+> - **Soft-delete не удаляет строку**: hard-delete каскадом снёс бы посты и переписку у собеседников. Cron на 30 дней — Фаза 12.
+> - **`ProfileView` пишется не чаще 1 раза в сутки на пару** — иначе таблица распухла бы от F5.
+> - Порядок роутов: конкретные пути (`me`, `favorites`, `search-history`) объявлены **до** `:userId` / `:id`, иначе параметр их перехватит.
+
+### Фаза 4б — Follow + Block + Close Friends (13 endpoints)
 - [ ] Follow: followers, following, follow/unfollow, **заявки** (`PENDING` для приватных: requests / accept / decline), удалить подписчика
-- [ ] Block: block / unblock / list + `BlockGuard` (заблокированный не видит профиль, не пишет, не в поиске)
+- [ ] Block: block / unblock / list + `BlockGuard` (логика уже в `AccessService` — нужны endpoint'ы и guard)
 - [ ] Close Friends: get / add / remove
-- [ ] `PrivacyGuard`: закрытый аккаунт → посты/истории видит только принятый подписчик
+- [ ] `PrivacyGuard`: закрытый аккаунт → посты/истории видит только принятый подписчик (логика уже в `AccessService.canViewContent`)
 - ✅ Проверить: подписка на приватный → `PENDING` → accept → контент виден; блок → 403
 
 ## Фаза 5 — Music (5 endpoints)
