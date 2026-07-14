@@ -363,9 +363,22 @@ model Report    { id, reporterId, targetType: POST|USER|COMMENT|STORY|CHAT, targ
 Формат: все под `/api`. 🔵 = был в старом Swagger (57 шт.), 🟢 = новый.
 
 ### 5.1 Auth (`/auth`) — 11
+
+> **Решение по email/phone (сессия 2026-07-15, уточнение к строке «email или phone»):**
+> На скрине IG одно поле — «Мобильный телефон или электронный адрес». У нас:
+> - **`email` — ОБЯЗАТЕЛЕН** и уникален (`String @unique`). Если юзер вводит в форму телефон,
+>   `phone` сохраняется, но email всё равно запрашивается — отдельным шагом / вторым полем.
+> - **`phone` — опционален** (`String? @unique`).
+> - **Причина:** `forgot-password` шлёт 6-значный код **только на email** (SMS-провайдера у нас нет).
+>   Будь email опциональным, у «телефонного» юзера пароль восстановить было бы нечем,
+>   и `forgot-password` пришлось бы отвечать `400 email не привязан`.
+> - **Следствие:** `forgot-password` работает у **всех** пользователей и никогда не падает в `400` из-за отсутствия email.
+> - **Логин работает по любому из трёх:** `userName` | `email` | `phone`.
+> - Схема БД менять не пришлось — `email String @unique` / `phone String? @unique` уже такие.
+
 | | Метод | Путь | Описание |
 |---|---|---|---|
-| 🔵 | POST | `/auth/register` | userName, fullName, email **или** phone, password, confirmPassword, **dob** (со скрина регистрации) |
+| 🔵 | POST | `/auth/register` | userName, fullName, **email (обязателен)**, phone (опционален), password, confirmPassword, **dob** (со скрина регистрации) |
 | 🔵 | POST | `/auth/login` | userName **или** email **или** phone + password → `{ accessToken, refreshToken, user }` |
 | 🟢 | POST | `/auth/refresh` | обновление токена |
 | 🟢 | POST | `/auth/logout` | отзыв refresh-токена |

@@ -52,6 +52,16 @@ services:
       timeout: 5s
       retries: 10
 
+  # SMTP только для dev: письма никуда не уходят, читаются в веб-морде на :8025.
+  # В prod SMTP_* в .env переключаются на Gmail (smtp.gmail.com:587, App Password) — код не меняется.
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: ig_mailhog
+    restart: unless-stopped
+    ports:
+      - '1025:1025' # SMTP
+      - '8025:8025' # web UI
+
   livekit:
     image: livekit/livekit-server:latest
     container_name: ig_livekit
@@ -78,6 +88,9 @@ services:
       S3_ENDPOINT: minio
       S3_PORT: '9000'
       LIVEKIT_URL: ws://livekit:7880
+      # внутри docker-сети SMTP-хост — имя сервиса, а не localhost
+      SMTP_HOST: mailhog
+      SMTP_PORT: '1025'
     ports:
       - '${PORT:-3000}:3000'
     depends_on:
@@ -88,6 +101,8 @@ services:
       minio:
         condition: service_started
       livekit:
+        condition: service_started
+      mailhog:
         condition: service_started
 
 volumes:

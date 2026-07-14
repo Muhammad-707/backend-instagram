@@ -76,14 +76,50 @@
 > - `MediaType` в Prisma — только IMAGE/VIDEO; AUDIO живёт отдельно (голосовые, музыка), поэтому в storage свой тип `MediaKind`.
 
 ## Фаза 3 — Auth (11 endpoints)
-- [ ] `register` (userName / fullName / email **или** phone / password / confirmPassword / **dob**) — как на скринах регистрации
-- [ ] `login` (по userName **или** email **или** phone) → access(15м) + refresh(30д)
-- [ ] `refresh`, `logout` (ротация refresh-токенов, `RefreshToken` в БД)
-- [ ] `forgot-password` → **код 6 цифр на реальный email** (Nodemailer) · `verify-code` → `resetToken` · `reset-password`
-- [ ] `change-password`, `check-username` (live-валидация), `resend-code` (rate-limit 1/мин), `GET /auth/me`
-- [ ] `JwtAuthGuard` + `@Public()` + `@CurrentUser()`
-- [ ] `ThrottlerGuard`: auth 5/мин
-- ✅ **Проверить письмо реально приходит на Gmail** (Mailtrap в dev, SMTP в prod)
+- [x] `register` (userName / fullName / **email обязателен** / phone опционален / password / confirmPassword / **dob**) + проверка возраста 13+
+- [x] `login` (по userName **или** email **или** phone) → access(15м) + refresh(30д)
+- [x] `refresh`, `logout` (ротация refresh-токенов, SHA-256 в `RefreshToken`, детект повторного использования)
+- [x] `forgot-password` → **код 6 цифр на реальный email** (Nodemailer + MailHog) · `verify-code` → `resetToken` · `reset-password`
+- [x] `change-password`, `check-username` (live-валидация), `resend-code` (rate-limit 1/мин), `GET /auth/me`
+- [x] `JwtAuthGuard` (глобальный APP_GUARD) + `@Public()` + `@CurrentUser()`
+- [x] `ThrottlerGuard`: auth 5/мин, resend-code 1/мин
+- [x] ⚠️ **TODO Фазы 2 закрыт**: `/upload` теперь под JwtAuthGuard (аноним → 401)
+- ✅ **Письмо реально приходит** — проверено в MailHog (HTML: логотип с градиентом, 6 плиток с цифрами)
+
+**Проверено живыми запросами:**
+- `check-username` → `{available:true}` для свободного, `{available:false}` для занятого (`eraj` из seed)
+- `register` → `201` + пара токенов + профиль; `passwordHash` наружу **не утекает**
+- `register` негатив: пароли не совпадают → `400` · возраст < 13 → `400` · userName занят → `409`
+- `login` по **userName**, по **email**, по **phone** → все три `200`
+- `login` с неверным паролем → **`401`, а не 500** (баг старого API)
+- **Rate-limit: 5 логинов проходят, 6-й → `429`** · `resend-code` второй раз подряд → `429`
+- `GET /auth/me` с токеном → `200` + профиль; без токена → `401`
+- **`POST /upload` без токена → `401`**, с токеном → `201` (TODO Фазы 2 закрыт)
+- `refresh` → новая пара, старый токен отозван; **повторное использование старого → `401` + все сессии сброшены**
+- `logout` → `200`, затем `refresh` → `401`; повторный `logout` → `200` (идемпотентно)
+- **`forgot-password` → письмо реально ушло в MailHog** (To/From/Subject верные); для несуществующего email — тот же ответ и письма нет
+- HTML-письмо: логотип Instagram с градиентом, **6 плиток с цифрами `433684`**, срок «15 минут»
+- `verify-code`: неверный код → `400` · **просроченный код (сдвинул `expiresAt` в БД на −20 мин) → `400`** · использованный повторно → `400`
+- `reset-password` → `200`; **старый пароль → `401`, новый → `200`**; повторный resetToken → `400` (одноразовый)
+- `change-password`: неверный старый → `401`; верный → `200`, все refresh-сессии отозваны
+- Swagger `/api/docs-json` — **14 endpoint'ов**, замок 🔒 ровно на защищённых · `build` · `lint` · `prisma validate` → зелёные
+
+> **Заметки Фазы 3:**
+> - **email ОБЯЗАТЕЛЕН, phone опционален** (решение пользователя, записано в `docs/TZ.md §5.1` и комментарием в схеме).
+>   На скрине IG одно поле «телефон или email»: если юзер вводит телефон — `phone` сохраняется, но email всё равно
+>   запрашивается. Причина: код сброса уходит **только на email** (SMS-провайдера нет), иначе «телефонному» юзеру
+>   пароль восстановить нечем. **Миграция не понадобилась** — схема уже была такой.
+> - **JwtAuthGuard глобальный (APP_GUARD), всё закрыто по умолчанию**, открывается точечно через `@Public()`.
+>   Так новый endpoint нельзя случайно забыть защитить — и именно это закрыло `/upload` без единой правки в его контроллере.
+> - **Refresh хранится как SHA-256**, не в открытом виде: утечка таблицы `RefreshToken` не даст войти в аккаунты.
+> - **Детект кражи токена**: повторное использование уже отозванного refresh → гасим ВСЕ сессии юзера.
+> - **resetToken одноразовый через Redis**: JWT сам по себе переиспользуем, поэтому `jti` кладётся в Redis (TTL 15 мин)
+>   и удаляется при первом `reset-password`. Плюс проверка `typ: 'reset'` — обычным access-токеном пароль не сменить.
+> - **Нет user enumeration**: `forgot-password` отвечает одинаково для существующего и несуществующего email;
+>   `verify-code` даёт один и тот же текст на «код неверен», «код чужой», «код просрочен».
+> - **MailHog в docker-compose** (dev, порт 1025 SMTP / 8025 web). Код MailService **один на dev и prod** — режим
+>   решают только `SMTP_*` в `.env`. Для Gmail достаточно раскомментировать блок в `.env.example` (App Password), код не трогается.
+> - Смена пароля (и reset, и change) **отзывает все refresh-сессии** — украденный токен перестаёт работать.
 
 ## Фаза 4 — Users, Profile, Follow, Privacy, Block, Close Friends (39 endpoints)
 - [ ] Users: поиск (по userName **и** fullName, substring), 8 endpoint'ов истории поиска (с `createdAt`!), `suggestions` (+ `followedBy`), `DELETE /users/me` (soft-delete 30 дней)

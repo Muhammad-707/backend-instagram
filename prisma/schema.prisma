@@ -149,12 +149,19 @@ enum JoinStatus {
 // ПОЛЬЗОВАТЕЛЬ И АККАУНТ (ТЗ §4.1)
 // ============================================================
 
+// Решение по регистрации (сессия 2026-07-15):
+// На скрине IG одно поле — «Мобильный телефон или электронный адрес». У нас:
+//   email — ОБЯЗАТЕЛЕН и уникален. Если юзер ввёл в форму телефон, phone сохраняется,
+//   но email всё равно запрашивается (вторым шагом формы).
+//   Причина: forgot-password шлёт 6-значный код ТОЛЬКО на email (SMS-провайдера нет).
+//   Будь email опциональным, у «телефонного» юзера пароль восстановить было бы нечем.
+// Логин при этом работает по любому из трёх: userName | email | phone.
 model User {
   id            String    @id @default(uuid())
   userName      String    @unique
   fullName      String
-  email         String    @unique
-  phone         String?   @unique
+  email         String    @unique // ОБЯЗАТЕЛЕН — см. комментарий выше
+  phone         String?   @unique // опционален
   passwordHash  String
   dob           DateTime?
   emailVerified Boolean   @default(false)

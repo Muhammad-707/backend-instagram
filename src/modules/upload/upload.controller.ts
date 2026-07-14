@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBearerAuth,
   ApiBody,
   ApiConsumes,
   ApiOkResponse,
@@ -25,7 +26,9 @@ const MAX_FILES = 10;
 /** Жёсткий предохранитель Multer — по самому большому лимиту (видео 100 МБ, ТЗ §6). */
 const HARD_LIMIT_BYTES = 100 * 1024 * 1024;
 
-// TODO(Фаза 3): повесить @UseGuards(JwtAuthGuard) — аноним не должен грузить файлы.
+// Защищён глобальным JwtAuthGuard (app.module): всё закрыто, кроме явного @Public().
+// Аноним получит 401 — TODO Фазы 2 закрыт.
+@ApiBearerAuth()
 @ApiTags('upload')
 @Controller('upload')
 export class UploadController {
