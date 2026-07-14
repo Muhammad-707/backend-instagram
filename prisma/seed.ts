@@ -20,44 +20,6 @@ const pick = <T>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)];
 const rint = (min: number, max: number): number => min + Math.floor(rnd() * (max - min + 1));
 const hoursAgo = (h: number): Date => new Date(Date.now() - h * 3600_000);
 
-// ---------------------------------------------------------------- музыка (34)
-const MUSIC: { title: string; artist: string; duration: number; genre: string }[] = [
-  { title: 'Summer Walk', artist: 'Olexy', duration: 154, genre: 'Chill' },
-  { title: 'Lofi Study', artist: 'FASSounds', duration: 187, genre: 'Lo-Fi' },
-  { title: 'Midnight Drive', artist: 'Coma-Media', duration: 203, genre: 'Synthwave' },
-  { title: 'Sunny Days', artist: 'Ashot Danielyan', duration: 142, genre: 'Pop' },
-  { title: 'Deep Focus', artist: 'Lexin Music', duration: 231, genre: 'Ambient' },
-  { title: 'Street Vibes', artist: 'Penguinmusic', duration: 168, genre: 'Hip-Hop' },
-  { title: 'Ocean Breeze', artist: 'SergePavkinMusic', duration: 195, genre: 'Chill' },
-  { title: 'Neon Lights', artist: 'Coma-Media', duration: 176, genre: 'Synthwave' },
-  { title: 'Coffee Morning', artist: 'Music_Unlimited', duration: 149, genre: 'Jazz' },
-  { title: 'Retro Funk', artist: 'QubeSounds', duration: 183, genre: 'Funk' },
-  { title: 'Cinematic Rise', artist: 'AlexGrohl', duration: 214, genre: 'Cinematic' },
-  { title: 'Happy Ukulele', artist: 'Lesfm', duration: 131, genre: 'Acoustic' },
-  { title: 'Trap Nation', artist: 'Top-Flow-Production', duration: 172, genre: 'Trap' },
-  { title: 'Piano Moment', artist: 'Keys of Moon', duration: 208, genre: 'Classical' },
-  { title: 'Energy Rock', artist: 'AlexGrohl', duration: 165, genre: 'Rock' },
-  { title: 'Dreamscape', artist: 'Lexin Music', duration: 246, genre: 'Ambient' },
-  { title: 'Dance Floor', artist: 'Penguinmusic', duration: 158, genre: 'EDM' },
-  { title: 'Acoustic Sunrise', artist: 'Lesfm', duration: 137, genre: 'Acoustic' },
-  { title: 'Night Rider', artist: 'Coma-Media', duration: 189, genre: 'Synthwave' },
-  { title: 'Chill Hop', artist: 'FASSounds', duration: 163, genre: 'Lo-Fi' },
-  { title: 'Motivation', artist: 'AlexGrohl', duration: 178, genre: 'Rock' },
-  { title: 'Soft Rain', artist: 'Music_Unlimited', duration: 222, genre: 'Ambient' },
-  { title: 'City Pop', artist: 'QubeSounds', duration: 191, genre: 'Pop' },
-  { title: 'Guitar Story', artist: 'Keys of Moon', duration: 174, genre: 'Acoustic' },
-  { title: 'Bass Drop', artist: 'Top-Flow-Production', duration: 152, genre: 'EDM' },
-  { title: 'Melancholy', artist: 'Keys of Moon', duration: 236, genre: 'Classical' },
-  { title: 'Groove Machine', artist: 'QubeSounds', duration: 167, genre: 'Funk' },
-  { title: 'Winter Tale', artist: 'SergePavkinMusic', duration: 219, genre: 'Cinematic' },
-  { title: 'Skate Park', artist: 'Penguinmusic', duration: 144, genre: 'Punk' },
-  { title: 'Slow Motion', artist: 'Olexy', duration: 198, genre: 'Chill' },
-  { title: 'Hype Beat', artist: 'Top-Flow-Production', duration: 156, genre: 'Trap' },
-  { title: 'Golden Hour', artist: 'Ashot Danielyan', duration: 181, genre: 'Pop' },
-  { title: 'Space Travel', artist: 'Lexin Music', duration: 253, genre: 'Ambient' },
-  { title: 'Late Night Jazz', artist: 'Music_Unlimited', duration: 227, genre: 'Jazz' },
-];
-
 // ---------------------------------------------------------------- локации (30)
 const LOCATIONS: { city: string; state: string | null; country: string }[] = [
   { city: 'Dushanbe', state: null, country: 'Tajikistan' },
@@ -146,27 +108,28 @@ async function main(): Promise<void> {
     prisma.post.deleteMany(),
     prisma.follow.deleteMany(),
     prisma.savedMusic.deleteMany(),
-    prisma.music.deleteMany(),
+    // Music НЕ удаляем: треки — это реальные mp3 в MinIO, залитые `npm run music:import`.
+    // Пересоздавать их здесь заглушками означало бы сломать стриминг.
     prisma.profile.deleteMany(),
     prisma.user.deleteMany(),
     prisma.location.deleteMany(),
   ]);
 
-  // --- Музыка
-  await prisma.music.createMany({
-    data: MUSIC.map((m, i) => ({
-      title: m.title,
-      artist: m.artist,
-      genre: m.genre,
-      duration: m.duration,
-      url: `https://cdn.pixabay.com/audio/track-${i + 1}.mp3`,
-      coverUrl: PICSUM(`cover${i}`, 300, 300),
-      isTrending: i < 8,
-      usesCount: rint(0, 500),
-    })),
-  });
+  // --- Музыка: НЕ создаём здесь. Треки — это настоящие mp3 в MinIO,
+  // залитые скриптом `npm run music:import` (он читает assets/music/).
+  // Раньше seed писал сюда URL-заглушки (cdn.pixabay.com/audio/track-N.mp3),
+  // из-за которых стриминг был невозможен.
   const music = await prisma.music.findMany();
-  console.log(`  🎵 music: ${music.length}`);
+  /** null, если музыки нет — посты и истории просто останутся без трека. */
+  const pickMusicId = (): number | null => (music.length > 0 ? pick(music).id : null);
+  if (music.length === 0) {
+    console.warn(
+      '  ⚠️  В таблице Music пусто. Сначала положите mp3 в assets/music/ и запустите `npm run music:import`,\n' +
+        '      иначе посты и истории останутся без музыки.',
+    );
+  } else {
+    console.log(`  🎵 music: ${music.length} (из MinIO, seed их не трогает)`);
+  }
 
   // --- Локации
   await prisma.location.createMany({
@@ -270,7 +233,7 @@ async function main(): Promise<void> {
         caption,
         isReel,
         locationId: rnd() > 0.4 ? pick(locations).id : null,
-        musicId: isReel || rnd() > 0.7 ? pick(music).id : null,
+        musicId: isReel || rnd() > 0.7 ? pickMusicId() : null,
         createdAt: hoursAgo(rint(1, 24 * 30)),
         media: {
           create: Array.from({ length: mediaCount }, (_, k) => ({
@@ -332,7 +295,7 @@ async function main(): Promise<void> {
           mediaUrl: PICSUM(`story${author.userName}${s}`, 1080, 1920),
           mediaType: MediaType.IMAGE,
           duration: 5,
-          musicId: rnd() > 0.5 ? pick(music).id : null,
+          musicId: rnd() > 0.5 ? pickMusicId() : null,
           musicStartSec: 12,
           closeFriendsOnly: rnd() > 0.8,
           createdAt,
@@ -351,7 +314,7 @@ async function main(): Promise<void> {
       data: {
         userId: author.id,
         text: pick(['Слушаю музыку 🎧', 'Пишу код…', 'Кто в Душанбе?', 'Хорошего дня ✨']),
-        musicId: rnd() > 0.5 ? pick(music).id : null,
+        musicId: rnd() > 0.5 ? pickMusicId() : null,
         bgColor: pick(['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A']),
         createdAt,
         expiresAt: new Date(createdAt.getTime() + 24 * 3600_000),

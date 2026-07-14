@@ -14,6 +14,7 @@ import { StorageModule } from './storage/storage.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CloseFriendsModule } from './modules/close-friends/close-friends.module';
 import { FollowModule } from './modules/follow/follow.module';
+import { MusicModule } from './modules/music/music.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { UsersModule } from './modules/users/users.module';
@@ -37,6 +38,7 @@ import { UsersModule } from './modules/users/users.module';
     ProfileModule,
     FollowModule,
     CloseFriendsModule,
+    MusicModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

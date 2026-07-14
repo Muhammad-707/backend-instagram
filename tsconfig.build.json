@@ -1,4 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "prisma/seed.ts"]
+  // scripts/ исключён: он лежит вне src/ и, попав в сборку, поднимает rootDir до корня проекта —
+  // выход уезжает в dist/src/main.js, а start:prod и watch ищут dist/main.js.
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "prisma/seed.ts", "scripts"]
 }

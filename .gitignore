@@ -5,3 +5,7 @@ dist/
 uploads/
 *.log
 .DS_Store
+# mp3-треки (175 МБ) — не в репозиторий; заполняются npm run music:import
+assets/music/*.mp3
+assets/music/*.jpg
+assets/music/*.png

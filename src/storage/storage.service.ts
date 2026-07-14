@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client as MinioClient } from 'minio';
@@ -103,6 +104,37 @@ export class StorageService implements OnModuleInit {
 
   publicUrlFor(key: string): string {
     return `${this.publicUrl}/${key}`;
+  }
+
+  /** Размер и mime объекта — нужны, чтобы посчитать Content-Range до чтения тела. */
+  async stat(key: string): Promise<{ size: number; mime: string }> {
+    const info = await this.client.statObject(this.bucket, key);
+    // minio типизирует metaData как индексируемый any — сужаем сами.
+    const meta: Record<string, string | undefined> = info.metaData;
+    return {
+      size: info.size,
+      mime: meta['content-type'] ?? 'application/octet-stream',
+    };
+  }
+
+  /** Весь объект потоком. */
+  getStream(key: string): Promise<Readable> {
+    return this.client.getObject(this.bucket, key);
+  }
+
+  /**
+   * Кусок объекта потоком — для Range-запросов.
+   * Читаем ровно запрошенный диапазон, а не весь файл: иначе перемотка трека
+   * тянула бы все 9 МБ с самого начала.
+   */
+  getPartialStream(key: string, offset: number, length: number): Promise<Readable> {
+    return this.client.getPartialObject(this.bucket, key, offset, length);
+  }
+
+  /** Ключ из публичной ссылки — обратная операция к publicUrlFor(). */
+  keyFromUrl(url: string): string | null {
+    const base = `${this.publicUrl}/`;
+    return url.startsWith(base) ? url.slice(base.length) : null;
   }
 
   /** Временная ссылка на приватный объект (пригодится, если закроем bucket в проде). */
