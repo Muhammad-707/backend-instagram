@@ -8,22 +8,45 @@
 ---
 
 ## Фаза 0 — Каркас и инфраструктура
-- [ ] `nest new instagram-backend` (TS, pnpm/npm)
-- [ ] Пакеты: `@nestjs/config @nestjs/jwt @nestjs/passport passport-jwt bcrypt @nestjs/swagger class-validator class-transformer @nestjs/throttler @nestjs/schedule @nestjs/event-emitter @nestjs/websockets socket.io prisma @prisma/client ioredis bullmq @nestjs/bullmq multer sharp fluent-ffmpeg nodemailer minio`
-- [ ] `docker-compose.yml`: postgres:16 + redis:7 + minio + api
-- [ ] `.env` / `.env.example`: `DATABASE_URL, REDIS_URL, JWT_SECRET, JWT_REFRESH_SECRET, S3_*, SMTP_*, APP_URL`
-- [ ] `common/`: `ResponseInterceptor` (`{data, errors, statusCode}`), `AllExceptionsFilter`, `CursorDto`
-- [ ] `ValidationPipe` (whitelist, forbidNonWhitelisted, transform), Helmet, CORS (домен фронта)
-- [ ] Swagger на `/api/docs` (Bearer auth)
-- [ ] `PrismaService`, `RedisService`, health-check `/api/health`
-- ✅ `docker compose up` → API поднимается, `/api/docs` открывается
+- [x] Каркас NestJS 11 в корне репозитория (package.json / tsconfig / nest-cli, TS strict)
+- [x] Пакеты: `@nestjs/config @nestjs/jwt @nestjs/passport passport-jwt bcrypt @nestjs/swagger class-validator class-transformer @nestjs/throttler @nestjs/schedule @nestjs/event-emitter @nestjs/websockets socket.io prisma @prisma/client ioredis bullmq @nestjs/bullmq multer sharp fluent-ffmpeg nodemailer minio livekit-server-sdk` (766 пакетов)
+- [x] `docker-compose.yml`: postgres:16 + redis:7 + minio + **livekit** + api (+ Dockerfile) — **написан, не запускался**
+- [x] `.env` / `.env.example`: `DATABASE_URL, REDIS_URL, JWT_*, S3_*, SMTP_*, LIVEKIT_*, APP_URL`
+- [x] `common/`: `ResponseInterceptor` (`{data, errors, statusCode}`), `AllExceptionsFilter` (+ маппинг ошибок Prisma), `CursorDto` + `buildCursorPage`
+- [x] `ValidationPipe` (whitelist, forbidNonWhitelisted, transform), Helmet, CORS (FRONTEND_URL)
+- [x] Swagger на `/api/docs` (Bearer auth) — отвечает `200`
+- [x] `PrismaService`, `RedisService`, health-check `/api/health` — проверен curl'ом
+- [ ] ⏳ `docker compose up` → API + БД + Redis + MinIO поднимаются (ждём Docker)
+
+**Проверено живыми запросами (без Docker):**
+- `GET /api/health` → `{"data":{"status":"degraded","database":"down","redis":"down",…},"errors":null,"statusCode":200}` — конверт верный, `errors: null` при успехе
+- `GET /api/docs` → `200`
+- `GET /api/nope` → `{"data":null,"errors":["Cannot GET /api/nope"],"statusCode":404,"code":"NOT_FOUND",…}` — `errors` только при ошибке
+- `npm run build` → зелёный · `tsc --noEmit` → 0 ошибок · `npm run lint` → 0 ошибок
+
+> **Заметки Фазы 0:**
+> - Каркас поднят **в корне репозитория** (не `nest new instagram-backend/` подпапкой) — репозиторий уже существовал с `docs/` и `CLAUDE.md`.
+> - `PrismaService.onModuleInit` **не роняет API**, если БД недоступна: логирует ошибку и продолжает, чтобы `/api/health` честно ответил `database: "down"`. Изначально падал с `P1000` и убивал весь процесс.
+> - ESLint 10 + typescript-eslint (`recommendedTypeChecked`) подключён, `no-explicit-any: error` — по ТЗ `any` запрещён.
+> - `livekit-server-sdk` и сервис `livekit` в docker-compose добавлены сразу (понадобятся в Фазе 12.5).
+> - Rate-limit: глобально 100/мин (`ThrottlerGuard` как `APP_GUARD`); 5/мин на auth-роуты вешаем в Фазе 3 через `@Throttle`.
 
 ## Фаза 1 — Схема БД + seed
-- [ ] `prisma/schema.prisma` — **все модели из ТЗ §4** (User, Profile, Follow, Block, CloseFriend, Post, PostMedia, Music, Story, Highlight, Note, Chat, Message, Notification, Location, Verification, …)
-- [ ] Индексы: `(userId, createdAt)`, `(postId, createdAt)`, `(chatId, sentAt)`, `userName`, `email`, `Hashtag.name`
-- [ ] `prisma migrate dev` + `prisma studio` проверить
-- [ ] `seed.ts`: **30+ треков музыки** (royalty-free mp3 + обложки + длительность), 30 локаций, 20 юзеров, 100 постов (фото и видео), истории, чаты, подписки
-- ✅ БД поднята, seed прошёл, данные видны в Prisma Studio
+- [x] `prisma/schema.prisma` — **все модели из ТЗ §4** + Notes v2 (NoteLike, NoteReply, Message.noteId/noteSnapshot) + Live (Live, LiveViewer, LiveComment, LiveLike, LiveReaction, LiveJoinRequest, LiveGuest). **56 моделей, 17 enum'ов**
+- [x] Индексы: `(userId, createdAt)`, `(postId, createdAt)`, `(chatId, sentAt)`, `userName`, `fullName`, `email`, `Hashtag.name`, `Story.expiresAt`, `Note.expiresAt`, `Live.status`
+- [x] `npx prisma format` + `npx prisma validate` → **The schema is valid** · `prisma generate` → клиент сгенерирован
+- [x] `seed.ts` написан: **34 трека**, 30 локаций, 20 юзеров, 100 постов (фото + reels), 10 юзеров с историями, 8 заметок, 5 чатов, подписки (в т.ч. PENDING на приватные) — **не запускался**
+- [ ] ⏳ `prisma migrate dev` + `prisma studio` (нужна БД)
+- [ ] ⏳ `npm run seed` — проверить, что данные легли (нужна БД)
+
+> **Заметки Фазы 1:**
+> - **`StoryReaction` без `@@unique`** (решение пользователя): в реальном IG реакция на историю — это **сообщение в чат**, и слать её можно сколько угодно раз. Добавлено поле `messageId Int?`, в `MsgType` добавлен `STORY_REACTION`.
+> - **`MessageRequest` с `@@unique([fromUserId, toUserId])`** (решение пользователя, антиспам): после `DECLINED` повторная заявка **обновляет существующую строку** (`status → PENDING`, `createdAt → now`), а не создаёт новую. Реализовать в Фазе 9.
+> - **`LiveLike` без `@@unique`** — в эфире можно жать ❤️ сотни раз (как в IG). `LiveJoinRequest` и `LiveGuest` — с `@@unique`: одна заявка / одно гостевое место на юзера.
+> - `Message.noteSnapshot` — снимок текста заметки: заметка умирает через 24ч, а сообщение в чате остаётся навсегда (TZ_LIVE_NOTES ЧАСТЬ A).
+> - Каскады: почти везде `onDelete: Cascade`; на «мягких» связях (`locationId`, `musicId`, `fromPostId`, `sharedPostId`, `collectionId`) — `SetNull`, чтобы удаление музыки/локации не сносило посты.
+> - `Notification` расширен полями `noteId` и `liveId` — нужны для `LIKE_NOTE`/`REPLY_NOTE` и `LIVE_*`.
+> - seed использует **детерминированный ПСЧ** (сид 42) — данные воспроизводимы. URL музыки в seed — заглушки (`cdn.pixabay.com/audio/track-N.mp3`), реальные mp3 подложим в Фазе 5 при стриминге.
 
 ## Фаза 2 — Storage + Upload
 - [ ] `StorageService`: MinIO/S3 (в dev — локальный диск), presigned URL
@@ -76,9 +99,15 @@
 - [ ] Highlights (Актуальное): create / update / delete / list — история в актуальном **не удаляется** через 24ч
 - ✅ Проверить: загрузил 3 истории одним запросом → 24ч TTL → добавил в актуальное → не удалилась
 
-## Фаза 8 — Notes (4 endpoints)
-- [ ] CRUD заметок: text ≤ 60, `musicId`, `bgColor`, TTL 24ч (cron), видны подписчикам / близким друзьям
-- ✅ Заметка исчезает через 24ч
+## Фаза 8 — Notes v2 (8 endpoints)
+- [ ] CRUD заметок: text ≤60, musicId, bgColor, TTL 24ч (cron)
+- [ ] 🆕 `POST /notes/:id/like` — toggle + уведомление LIKE_NOTE
+- [ ] 🆕 `GET /notes/:id/likes` — список профилей, кто лайкнул (только автору)
+- [ ] 🆕 `POST /notes/:id/reply` — ответ → findOrCreateChat → Message(type=NOTE_REPLY, noteId)
+       + noteSnapshot (заметка умрёт через 24ч, а сообщение в чате останется!)
+- [ ] 🆕 `GET /notes/:id/replies`
+- [ ] MsgType += NOTE_REPLY · NotifType += LIKE_NOTE, REPLY_NOTE
+- ✅ Проверить: лайк → автор видит профиль; ответ → появился в чате у обоих
 
 ## Фаза 9 — Chat + Realtime (18 endpoints + Socket.IO)
 - [ ] `GET /chats` — **lastMessage, lastMessageAt, unreadCount, peer, isOnline, lastSeenAt** (всего этого не было в старом API)
@@ -117,6 +146,20 @@
 - [ ] Cron: за 1 день до конца триала → уведомление «Ваше время вышло — купите, иначе галочка снимется»; по истечении → `isVerified = false`
 - [ ] Admin: users, delete user, reports, resolve
 - ✅ Триал → галочка появляется → через 7 дней снимается
+
+## Фаза 12.5 — LIVE (Прямые эфиры, 18 endpoints) — см. docs/TZ_LIVE_NOTES.md ЧАСТЬ B
+- [ ] LiveKit в docker-compose + LiveKitService (publisher / subscriber токены)
+- [ ] Prisma: Live, LiveViewer, LiveComment, LiveLike, LiveReaction, LiveJoinRequest, LiveGuest
+- [ ] start / end / feed / :id / user/:userId / join / leave / viewers
+- [ ] comment / like (много раз!) / reaction (всплывающие смайлы)
+- [ ] request-join → accept (гость = второй publisher, split-экран) / decline (уведомление отказа)
+- [ ] PUT /camera (видео выкл → аватар/картинка, ЗВУК ИДЁТ ВСЕГДА) · PUT /audio · kick · stats
+- [ ] Socket namespace /live: started, viewers, comment, like, reaction,
+       join-request, join-accepted, join-declined, guest-joined, camera, ended
+- [ ] Доступ: подписчик → в рейле историй; НЕ подписчик → только через ПОИСК (профиль → «В эфире»),
+       там может смотреть, комментировать, лайкать, подписаться
+- [ ] PrivacyGuard (закрытый аккаунт) + BlockGuard
+- ✅ Проверить с 3 клиентов: хост + зритель + гость (заявка → принял → split-экран)
 
 ## Фаза 13 — Финал: тесты, производительность, деплой
 - [ ] e2e (Jest + Supertest): auth-флоу, лента, лайк, история, чат, приватный аккаунт, блок
