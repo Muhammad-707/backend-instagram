@@ -12,6 +12,8 @@ import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { StorageModule } from './storage/storage.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CloseFriendsModule } from './modules/close-friends/close-friends.module';
+import { FollowModule } from './modules/follow/follow.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { UsersModule } from './modules/users/users.module';
@@ -33,6 +35,8 @@ import { UsersModule } from './modules/users/users.module';
     UploadModule,
     UsersModule,
     ProfileModule,
+    FollowModule,
+    CloseFriendsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

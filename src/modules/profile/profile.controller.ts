@@ -8,6 +8,7 @@ import {
   Put,
   Query,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -21,6 +22,8 @@ import {
 } from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { BlockGuard } from '../../common/guards/block.guard';
+import { PrivacyGuard } from '../../common/guards/privacy.guard';
 import { CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { UploadedFile as MulterFile } from '../../storage/storage.types';
 import {
@@ -151,7 +154,10 @@ export class ProfileController {
 
   // ─────────── чужой профиль ───────────
 
+  // BlockGuard — на сам профиль (заблокированный не видит его вовсе).
+  // PrivacyGuard — на КОНТЕНТ: у закрытого аккаунта посты видны только принятым подписчикам.
   @Get(':userId')
+  @UseGuards(BlockGuard)
   @ApiOperation({
     summary: 'Профиль пользователя',
     description: '+ isFollowing / isFollowedBy / isBlocked / hasRequestPending / canViewContent',
@@ -175,6 +181,7 @@ export class ProfileController {
   }
 
   @Get(':userId/posts')
+  @UseGuards(PrivacyGuard)
   @ApiOperation({ summary: 'Публикации пользователя (закрытый аккаунт → 403)' })
   @ApiOkResponse({ type: [PostBriefDto] })
   async posts(
@@ -186,6 +193,7 @@ export class ProfileController {
   }
 
   @Get(':userId/reels')
+  @UseGuards(PrivacyGuard)
   @ApiOperation({ summary: 'Reels пользователя (закрытый аккаунт → 403)' })
   @ApiOkResponse({ type: [PostBriefDto] })
   async reels(
@@ -197,6 +205,7 @@ export class ProfileController {
   }
 
   @Get(':userId/tagged')
+  @UseGuards(PrivacyGuard)
   @ApiOperation({ summary: 'Отмеченные публикации (закрытый аккаунт → 403)' })
   @ApiOkResponse({ type: [PostBriefDto] })
   async tagged(
