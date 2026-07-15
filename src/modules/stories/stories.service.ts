@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { FollowStatus, MediaType, MsgType, NotifType, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { AccessService } from '../../common/access/access.service';
+import { ChatUtilService } from '../../common/chat/chat-util.service';
 import {
   DeleteExpiredStoryPayload,
   JOB_DELETE_EXPIRED_STORY,
@@ -73,6 +74,7 @@ export class StoriesService {
     private readonly storage: StorageService,
     private readonly media: MediaService,
     private readonly validator: FileValidator,
+    private readonly chat: ChatUtilService,
     @InjectQueue(STORIES_QUEUE) private readonly queue: Queue<DeleteExpiredStoryPayload>,
     config: ConfigService,
   ) {
@@ -343,7 +345,7 @@ export class StoriesService {
       throw new BadRequestException('Нельзя реагировать на свою историю');
     }
 
-    const chat = await this.findOrCreateChat(viewerId, story.userId);
+    const chat = await this.chat.findOrCreateDirectChat(viewerId, story.userId);
     const message = await this.prisma.message.create({
       data: {
         chatId: chat.id,
@@ -370,7 +372,7 @@ export class StoriesService {
       throw new BadRequestException('Нельзя ответить на свою историю');
     }
 
-    const chat = await this.findOrCreateChat(viewerId, story.userId);
+    const chat = await this.chat.findOrCreateDirectChat(viewerId, story.userId);
     const message = await this.prisma.message.create({
       data: {
         chatId: chat.id,
@@ -581,22 +583,6 @@ export class StoriesService {
     } catch {
       throw new BadRequestException('overlays: невалидный JSON');
     }
-  }
-
-  private async findOrCreateChat(a: string, b: string): Promise<{ id: number }> {
-    const existing = await this.prisma.chat.findFirst({
-      where: {
-        isGroup: false,
-        AND: [{ participants: { some: { userId: a } } }, { participants: { some: { userId: b } } }],
-      },
-      select: { id: true },
-    });
-    if (existing) return existing;
-
-    return this.prisma.chat.create({
-      data: { isGroup: false, participants: { create: [{ userId: a }, { userId: b }] } },
-      select: { id: true },
-    });
   }
 
   private async notify(

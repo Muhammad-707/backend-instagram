@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { FollowStatus, MediaType, NotifType, Prisma, ReportTargetType } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
+import { ChatUtilService } from '../../common/chat/chat-util.service';
 import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FileValidator } from '../../storage/file-validator';
@@ -68,6 +69,7 @@ export class PostsService {
     private readonly storage: StorageService,
     private readonly media: MediaService,
     private readonly validator: FileValidator,
+    private readonly chat: ChatUtilService,
     config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -402,7 +404,7 @@ export class PostsService {
     if (!toUserId) throw new BadRequestException('Не указан получатель');
     await this.access.assertNotBlocked(userId, toUserId);
 
-    const chat = await this.findOrCreateChat(userId, toUserId);
+    const chat = await this.chat.findOrCreateDirectChat(userId, toUserId);
     await this.prisma.message.create({
       data: { chatId: chat.id, senderId: userId, type: 'POST_SHARE', sharedPostId: postId },
     });
@@ -502,23 +504,6 @@ export class PostsService {
     if (await this.access.isBlockedBetween(userId, actorId)) return;
 
     await this.prisma.notification.create({ data: { userId, actorId, type, ...extra } });
-  }
-
-  private async findOrCreateChat(a: string, b: string): Promise<{ id: number }> {
-    // Диалог 1-на-1: чат, где ровно эти двое участников.
-    const existing = await this.prisma.chat.findFirst({
-      where: {
-        isGroup: false,
-        AND: [{ participants: { some: { userId: a } } }, { participants: { some: { userId: b } } }],
-      },
-      select: { id: true },
-    });
-    if (existing) return existing;
-
-    return this.prisma.chat.create({
-      data: { isGroup: false, participants: { create: [{ userId: a }, { userId: b }] } },
-      select: { id: true },
-    });
   }
 
   /** Мои лайки/избранное — одним запросом на всю страницу, без N+1. */

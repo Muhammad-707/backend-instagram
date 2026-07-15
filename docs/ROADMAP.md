@@ -302,15 +302,34 @@
 > - **close-friends истории** видны только тем, кого автор добавил в близкие друзья (проверка в `loadVisible` и `rail`).
 > - Endpoint'ов **17, а не 16**: ТЗ §5.7 считает 16, но `GET /stories/:id` в списке есть — посчитан по факту.
 
-## Фаза 8 — Notes v2 (8 endpoints)
-- [ ] CRUD заметок: text ≤60, musicId, bgColor, TTL 24ч (cron)
-- [ ] 🆕 `POST /notes/:id/like` — toggle + уведомление LIKE_NOTE
-- [ ] 🆕 `GET /notes/:id/likes` — список профилей, кто лайкнул (только автору)
-- [ ] 🆕 `POST /notes/:id/reply` — ответ → findOrCreateChat → Message(type=NOTE_REPLY, noteId)
-       + noteSnapshot (заметка умрёт через 24ч, а сообщение в чате останется!)
-- [ ] 🆕 `GET /notes/:id/replies`
-- [ ] MsgType += NOTE_REPLY · NotifType += LIKE_NOTE, REPLY_NOTE
-- ✅ Проверить: лайк → автор видит профиль; ответ → появился в чате у обоих
+## Фаза 8 — Notes v2 (8 endpoints) ✅
+- [x] CRUD заметок: `GET /notes` (свои+подписок), `POST` (text ≤60, musicId, bgColor, TTL 24ч), `PUT /:id`, `DELETE /:id`
+- [x] 🆕 `POST /notes/:id/like` — toggle + уведомление LIKE_NOTE
+- [x] 🆕 `GET /notes/:id/likes` — список профилей, кто лайкнул (**только автору**)
+- [x] 🆕 `POST /notes/:id/reply` — ответ → `findOrCreateDirectChat` → Message(type=NOTE_REPLY, noteId, **noteSnapshot**) → `{chatId, messageId}`
+- [x] 🆕 `GET /notes/:id/replies` (**только автору**)
+- [x] TTL 24ч через **cron раз в час** (`NotesCron`); нельзя отвечать на свою заметку; BlockGuard/приватность
+- ✅ Проверено: лайк → автор видит профиль; ответ → чат у обоих; **заметка умерла → сообщение живо, превью цело**
+
+**Проверено живыми запросами (два аккаунта):**
+- CRUD: `POST /notes` → `201` (text, bgColor, музыка, expiresAt +24ч); `text` >60 → `400`; `PUT` меняет текст/цвет; daler видит заметку eraj в ленте (`isMine=false`)
+- **Лайк:** daler лайкает → `liked:true`, toggle снимает; **автор eraj видит профиль лайкнувшего** (`GET /likes` → `daler`); чужому → **`403`**
+- **Ответ → чат у ОБОИХ:** `POST /reply` → `{chatId:6, messageId:47}`; в БД `Message(NOTE_REPLY)` с участниками `eraj,daler`; ответ на свою → `400`; `GET /replies` только автору (чужому → `403`)
+- **ГЛАВНОЕ — noteSnapshot:** заметку удалил (сдвинул expiresAt, `DELETE expired`) → `заметка_есть=0`, но **сообщение в чате живое**: text «Что за трек?» цел, `noteId=NULL` (SetNull), **`noteSnapshot="Новый текст"` сохранил превью** — не сломалось
+- **BlockGuard:** заблокированный не лайкает (`403`), не отвечает (`403`), не видит заметку в ленте
+- Swagger: **notes 8**, всего **107 endpoint'ов** · `build` · `lint` · `prisma validate` → зелёные
+
+> **Заметки Фазы 8:**
+> - **`noteSnapshot` — снимок текста заметки в момент ответа.** Заметка живёт 24ч, а сообщение-ответ в чате — вечно.
+>   `Message.noteId` при удалении заметки становится `NULL` (SetNull), а `noteSnapshot` хранит превью «в ответ на заметку …»,
+>   чтобы оно не превратилось в пустоту. Проверено реальным удалением заметки.
+> - **`findOrCreateChat` вынесен в общий `ChatUtilService`** (`common/chat/`, @Global). Он был скопирован в posts (share)
+>   и stories (reaction/reply) — с добавлением notes стало бы три копии. Оба прежних места переведены на общий сервис.
+> - **TTL заметок — простой cron, не BullMQ.** У заметок нет медиа в S3 и нет «актуального» (в отличие от историй),
+>   поэтому `deleteMany({ expiresAt lte now })` раз в час достаточно; отдельная задача на каждую заметку избыточна.
+> - **Одна активная заметка на юзера**: `POST /notes` удаляет прежние — в IG у профиля висит ровно одна заметка.
+> - **`GET /likes` и `GET /replies` — только автору** (приватность реакций на заметку), лайк/ответ — с проверкой блокировки и приватности.
+> - `NotifType.LIKE_NOTE` / `REPLY_NOTE` и `MsgType.NOTE_REPLY` уже были в схеме (заложены в Фазе 1).
 
 ## Фаза 9 — Chat + Realtime (18 endpoints + Socket.IO)
 - [ ] `GET /chats` — **lastMessage, lastMessageAt, unreadCount, peer, isOnline, lastSeenAt** (всего этого не было в старом API)
