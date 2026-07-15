@@ -381,22 +381,27 @@
 - [x] `ProfileView` — «кто заходил в твой профиль» (не чаще 1 записи/сутки на пару)
 - [x] `unread-count`, `read`, `read-all`
 - [x] Себя не уведомляем, заблокированные не уведомляют
-- ⏳ Лайк с другого аккаунта → уведомление прилетает в сокет **мгновенно** — код готов, живой прогон НЕ выполнен (Docker не запущен)
+- ✅ Лайк с другого аккаунта → уведомление прилетает в сокет **мгновенно** — проверено живьём: латентность ~167 мс
 
 > Заметки Фазы 10:
-> - **Статус: код завершён и проверен по коду; живой end-to-end прогон ОТЛОЖЕН** (Postgres/Redis/MinIO не подняты — Docker Desktop выключен).
+> - **Статус: код завершён И проверен живыми запросами (2+ аккаунта, socket.io-client).**
 > - `NotificationService` — единственная точка записи: `@OnEvent(NOTIFY_EVENT)`. Правила «себя не уведомляем»
 >   и «блок не уведомляет» проверяются здесь централизованно (не в каждом сервисе).
-> - Эмиттеры `NOTIFY_EVENT` подтверждены в коде: follow (FOLLOW/FOLLOW_REQUEST/FOLLOW_ACCEPTED),
+> - Эмиттеры `NOTIFY_EVENT`: follow (FOLLOW/FOLLOW_REQUEST/FOLLOW_ACCEPTED),
 >   posts (LIKE_POST/SAVE_POST/SHARE_POST/MENTION/TAG_POST/NEW_POST_FROM_FOLLOWING),
 >   comments (COMMENT_POST/REPLY_COMMENT/LIKE_COMMENT/MENTION), notes (LIKE_NOTE/REPLY_NOTE),
 >   stories (LIKE_STORY/STORY_REACTION/STORY_REPLY), profile (PROFILE_VIEW).
 > - `VERIFICATION_TRIAL_ENDING` — тип и текст готовы, эмитится cron'ом Фазы 12 (ещё не реализован).
 > - Группировка: окно 300, ключ = тип+цель, уникальные акторы → «actor и ещё N».
 > - Пуш: `notification:new` = { notification, unreadCount } мгновенно получателю через RealtimeService.
-> - **Что осталось для честного `[x]` на ✅-строке:** поднять Docker → like с 2-го аккаунта →
->   убедиться, что строка в БД + `GET /notifications` + `unread-count`=1 + сокет-пуш пришёл;
->   проверить self→нет, block→нет, 2 актора→«и ещё 1».
+> - **Живая проверка (docker up, seed):**
+>   - A: like от sitora на пост eraj → сокет-пуш `notification:new` за ~167 мс, type=LIKE_POST, строка в БД. ✅
+>   - B: 6 разных актёров лайкнули один пост → ОДНА строка в ленте, «firuz и ещё 5», othersCount=5, groupIds=6. ✅
+>   - C: eraj лайкнул свой пост → unread не изменился (себя не уведомляем). ✅
+>   - D: заблокированный komron лайкнул → unread не изменился (блок не уведомляет). ✅
+>   - E: read группы → updated=6, unread 7→1; read-all → 0. ✅
+>   - F: `GET /notifications/profile-views` отвечает (items[]). ✅
+> - Не проверялось живьём: PROFILE_VIEW-уведомление (нужен заход в профиль) и VERIFICATION_TRIAL_ENDING (cron Фазы 12).
 
 ## Фаза 11 — Search + Explore (4 endpoints)
 - [x] `GET /search?q=` — аккаунты + хэштеги + локации одним ответом
