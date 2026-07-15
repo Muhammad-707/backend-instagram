@@ -6,6 +6,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AccessModule } from './common/access/access.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { JobsModule } from './jobs/jobs.module';
 import { HealthModule } from './health/health.module';
 import { MailModule } from './mail/mail.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -16,6 +17,7 @@ import { CloseFriendsModule } from './modules/close-friends/close-friends.module
 import { FollowModule } from './modules/follow/follow.module';
 import { MusicModule } from './modules/music/music.module';
 import { PostsModule } from './modules/posts/posts.module';
+import { StoriesModule } from './modules/stories/stories.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { UsersModule } from './modules/users/users.module';
@@ -32,6 +34,7 @@ import { UsersModule } from './modules/users/users.module';
     StorageModule,
     MailModule,
     AccessModule,
+    JobsModule,
     HealthModule,
     AuthModule,
     UploadModule,
@@ -41,6 +44,7 @@ import { UsersModule } from './modules/users/users.module';
     CloseFriendsModule,
     MusicModule,
     PostsModule,
+    StoriesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

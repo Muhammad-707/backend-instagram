@@ -267,15 +267,40 @@
 > - **`toBool`/`toStringArray` в DTO**: multipart шлёт всё строками, приводим `"true"`→bool, `"a,b"`→string[].
 > - Endpoint'ов **22, а не 20**: ТЗ §5.6 перечисляет 20, но `/comments/:id/replies` и `/reels` в списке фигурируют — посчитаны по факту.
 
-## Фаза 7 — Stories + Highlights (16 endpoints)
-- [ ] `POST /stories` — **мультизагрузка до 10 файлов за раз**, image **и video**, `musicId` + `musicStartSec`, `overlays` (текст/стикеры/эффекты, JSON), `filter`, `closeFriendsOnly`, `fromPostId` (поделиться постом/reels в историю)
-- [ ] `expiresAt = +24ч` + BullMQ-задача на удаление
-- [ ] `GET /stories` — рейл: группировка по авторам, `isViewed` (**считается на сервере!**), `hasCloseFriends` (зелёное кольцо)
-- [ ] View, Like (toggle → `{liked, likesCount}`), **Reaction (emoji)**, **Reply → уходит сообщением в чат**
-- [ ] `GET /stories/:id/viewers` — **полный список зрителей: кто смотрел, кто лайкнул, какая реакция** (только автору)
-- [ ] `GET /stories/archive` — свои истёкшие
-- [ ] Highlights (Актуальное): create / update / delete / list — история в актуальном **не удаляется** через 24ч
-- ✅ Проверить: загрузил 3 истории одним запросом → 24ч TTL → добавил в актуальное → не удалилась
+## Фаза 7 — Stories + Highlights (17 endpoints) ✅
+- [x] `POST /stories` — **мультизагрузка до 10 файлов за раз** → до 10 отдельных Story, image **и video**, `musicId` + `musicStartSec`, `overlays` (JSON), `filter`, `closeFriendsOnly`, `fromPostId` (репост поста в историю)
+- [x] `expiresAt = +24ч` + **BullMQ-задача на удаление** (`delay`, `jobId=story-N`) + cron-подстраховка раз в час
+- [x] `GET /stories` — рейл: группировка по авторам, `isViewed`/`allViewed` (**на сервере!**), `hasCloseFriends`
+- [x] `GET /stories/my`, `/archive`, `/user/:userId`, `/:id`; View, Like (toggle → `{liked, likesCount}`), **Reaction (emoji)**, **Reply**
+- [x] Reaction и Reply **уходят сообщением в чат** (type=STORY_REACTION / STORY_REPLY)
+- [x] `GET /stories/:id/viewers` — **полный список: кто смотрел + лайкнул + реакция** (только автору)
+- [x] Highlights: create / list / `:id` / update / delete — история в актуальном **не удаляется** через 24ч
+- ✅ Проверено: 3 файла одним запросом → 3 истории → в актуальное → **BullMQ реально не удалил их, удалил только не-актуальную**
+
+**Проверено живыми запросами (два аккаунта):**
+- **Мультизагрузка:** `POST /stories` с 3 файлами → **3 отдельные Story** (2 IMAGE + 1 VIDEO), у всех музыка+startSec, filter, overlays, `expiresAt +24ч`
+- **BullMQ:** после создания в Redis — 3 delayed-задачи (`bull:stories:story-22/23/24`)
+- **isViewed на СЕРВЕРЕ** (баг softclub #17): до просмотра `false` → `POST /view` → `true` (в БД, не в localStorage); `allViewed` рейла переключился после просмотра всех
+- **Like — boolean, не строка** (баг softclub #15): `liked: true` (тип boolean), toggle снимает
+- **Реакция ❤️/🔥 → сообщение в чат** (можно много раз, без @@unique); Reply → тоже в чат; проверено по БД: `STORY_REACTION`/`STORY_REPLY` с эмодзи и storyId
+- **`GET /viewers`** (баг softclub #16): `daler viewed=true liked=true reaction=🔥`; чужому (не автору) → **`403`**
+- **ГЛАВНОЕ — highlights vs 24ч:** истории 22,23 в актуальном, 24 — нет; сдвинул `expiresAt` в прошлое, **реально запустил BullMQ-процессор** → лог «История 22/23 в актуальном — не удаляем», «История 24 удалена». В БД остались **[22,23]**
+- Highlights CRUD: create (cover из первой истории), list, `:id` (с историями), update (title+состав), чужой → `403`
+- Архив (свои истёкшие), `fromPostId` (репост поста → история id=25 fromPostId=101), приватность (истории приватной nodira → `403`)
+- Swagger: **stories 12 + highlights 5 = 17**, всего **99 endpoint'ов** · `build` · `lint` · `prisma validate` → зелёные
+
+> **Заметки Фазы 7:**
+> - **BullMQ впервые.** `JobsModule` (@Global) поднимает очередь на том же Redis. Каждая история при создании ставит
+>   задачу с `delay = 24ч` и `jobId=story-N` (повторный запуск не дублирует). Процессор `StoriesProcessor` перед удалением
+>   **проверяет `_count.highlights`** — история в «Актуальном» переживает 24ч.
+> - **Cron-подстраховка** (`StoriesCron`, раз в час): если Redis был недоступен в момент создания и задача не встала,
+>   истёкшие истории (не в актуальном) всё равно подчистятся. BullMQ — основной путь, cron — сеть безопасности.
+> - **Мультизагрузка = N отдельных Story**, а не одна с N медиа: в IG каждая история своя, со своим таймером и зрителями.
+> - **Реакция/ответ на историю — это Message в чате** (решение из схемы, `messageId` в `StoryReaction`/`StoryReply`).
+>   Endpoint'ы чтения чата — Фаза 9, здесь проверено по БД.
+> - **isViewed/allViewed только на сервере** через `StoryView` (`@@unique storyId+userId`) — клиент не участвует.
+> - **close-friends истории** видны только тем, кого автор добавил в близкие друзья (проверка в `loadVisible` и `rail`).
+> - Endpoint'ов **17, а не 16**: ТЗ §5.7 считает 16, но `GET /stories/:id` в списке есть — посчитан по факту.
 
 ## Фаза 8 — Notes v2 (8 endpoints)
 - [ ] CRUD заметок: text ≤60, musicId, bgColor, TTL 24ч (cron)
