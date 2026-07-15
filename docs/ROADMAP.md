@@ -331,20 +331,48 @@
 > - **`GET /likes` и `GET /replies` — только автору** (приватность реакций на заметку), лайк/ответ — с проверкой блокировки и приватности.
 > - `NotifType.LIKE_NOTE` / `REPLY_NOTE` и `MsgType.NOTE_REPLY` уже были в схеме (заложены в Фазе 1).
 
-## Фаза 9 — Chat + Realtime (18 endpoints + Socket.IO)
-- [ ] `GET /chats` — **lastMessage, lastMessageAt, unreadCount, peer, isOnline, lastSeenAt** (всего этого не было в старом API)
-- [ ] `GET /chats/:id` (cursor), `POST /chats` (идемпотентно)
-- [ ] `POST /chats/:id/messages` — текст / фото / видео / **голосовое (audio)** / стикер / **ответ (replyToId)** / отправка поста
-- [ ] `PUT /chats/messages/:id` — **редактировать** (≤ 15 мин), `editedAt`
-- [ ] `DELETE /chats/messages/:id` — **OwnerGuard: только своё!** (баг старого API)
-- [ ] `POST /chats/messages/bulk-delete` — **удалить несколько выбранных**
-- [ ] Реакции на сообщения, `POST /chats/:id/read` («Просмотрено»)
-- [ ] Тема чата, никнеймы, mute, `DELETE /chats/:id`, report
-- [ ] **Запросы на переписку** (от неподписанных): requests / accept / decline
-- [ ] **Socket.IO `/rt`**: `message:new|edited|deleted`, `message:reaction|read`, `typing:start|stop`, `presence:update` (онлайн + «был в сети N мин назад»), `story:new`
-- [ ] Presence в Redis (TTL 60с, heartbeat 30с)
-- [ ] **Звонки**: `CallSession` + WebRTC-сигналинг через сокет (`call:offer/answer/ice/end`) — сервер только передаёт SDP/ICE
-- ✅ Проверить с **двух** клиентов: сообщение приходит мгновенно, typing, онлайн-статус, реакция, редактирование, «просмотрено»
+## Фаза 9 — Chat + Realtime (20 endpoints + Socket.IO) ✅
+- [x] `GET /chats` — **lastMessage, lastMessageAt, unreadCount, peer, isOnline, lastSeenAt** (всего этого не было в старом API)
+- [x] `GET /chats/:id`, `GET /chats/:id/messages` (cursor), `POST /chats` (идемпотентно, + «Запросы»)
+- [x] `POST /chats/:id/messages` — текст / фото / видео / **голосовое (audio)** / стикер / **ответ (replyToId)** / отправка поста
+- [x] `PUT /chats/messages/:id` — **редактировать** (≤ 15 мин), `editedAt`
+- [x] `DELETE /chats/messages/:id` — **только своё!** чужое → 403 (баг softclub #11)
+- [x] `POST /chats/messages/bulk-delete` — удалить несколько (только свои)
+- [x] Реакции (`POST/DELETE /chats/messages/:id/reaction`), `POST /chats/:id/read` («Просмотрено»)
+- [x] Тема, никнеймы, mute, `DELETE /chats/:id`, report
+- [x] **Запросы на переписку**: requests / accept / decline — `@@unique`, повтор после DECLINED обновляет строку
+- [x] **Socket.IO `/rt`**: `message:new|edited|deleted`, `message:reaction|read`, `typing:start|stop`, `presence:update`
+- [x] Presence в Redis (TTL 60с, heartbeat) + `lastSeenAt` в Postgres
+- [x] **Звонки**: `POST /chats/:id/call` (CallSession) + WebRTC-сигналинг `call:offer/answer/ice/end` через сокет
+- ✅ Проверено с **двух** клиентов одновременно (socket.io-client)
+
+**Проверено живыми запросами (2 сокет-клиента eraj+daler):**
+- **МГНОВЕННАЯ доставка:** `POST message` → daler получил `message:new` через сокет за **25 мс** (не polling)
+- **Главная проверка (баг #11):** daler удаляет ЧУЖОЕ сообщение eraj → **`403`**; своё → `200` + `message:deleted` собеседнику
+- Realtime-события у второго клиента: `typing:start/stop`, `message:reaction`, `message:edited` (editedAt), `message:read`
+- **Presence:** сокет онлайн → `isOnline:true`; отключился → `isOnline:false` + `lastSeenAt` (было в сети)
+- **`GET /chats`** отдаёт весь набор: peer, lastMessage, lastMessageAt, unreadCount, isOnline, lastSeenAt
+- **Редактирование ≤15 мин** (editedAt), **bulk-delete** (свои 3 удалены, чужие → 0)
+- **Запросы на переписку:** неподписанная nigora → `isRequest:true`, попала в `/chats/requests` с lastMessage; decline → **повторная заявка обновляет ту же строку (1, не плодится)** — `@@unique`; accept → в основные
+- Настройки: theme/nickname/mute → `200`; `POST /call` → `RINGING`
+- **WebRTC-сигналинг:** `call:offer` → собеседник получил, `call:answer`/`call:ice`/`call:end` — все проходят p2p (сервер только передаёт SDP/ICE)
+- Swagger: **chats 20**, всего **127 endpoint'ов** · `build` · `lint` · `prisma validate` → зелёные
+
+> **Заметки Фазы 9:**
+> - **`RealtimeService` — мост REST↔сокет.** Гейтвей регистрирует в нём `Server`, сервисы вызывают `emitToUsers` без
+>   зависимости от гейтвея — иначе была бы циклическая зависимость chat↔gateway. В Фазе 10 тем же мостом полетят уведомления.
+> - **Комната на пользователя** (`user:<id>`): персональные события уходят во все его вкладки/устройства.
+> - **Presence: Redis (истина) + Postgres (`lastSeenAt`).** Ключ живёт 60с, heartbeat каждые 30с продлевает; пропустил два —
+>   офлайн. `lastSeenAt` дублируется в БД, чтобы «был в сети N мин назад» пережил перезапуск Redis.
+> - **Авторизация сокета — тем же access-JWT**, токен в `handshake.auth.token`; при disconnect остались другие сокеты юзера — он ещё онлайн.
+> - **Удаление сообщения — мягкое** (`isDeleted`, text/media → null): «Сообщение удалено» в чате, история переписки не рвётся.
+> - **Запрос на переписку** возникает, если я НЕ подписан на собеседника. `@@unique(from,to)`: повтор после DECLINED
+>   обновляет строку в PENDING — **даже если чат уже существовал** (был баг: ранний return на существующем чате пропускал переоткрытие).
+> - **Звонок: сервер только сигналит.** `POST /call` создаёт CallSession и шлёт `call:incoming`; сами SDP/ICE идут
+>   `call:offer/answer/ice/end` через сокет, медиа — p2p, сервер его не трогает.
+> - **`@WebSocketServer()` в namespace-шлюзе — это Namespace, не Server** (был баг `this.server.of is not a function`);
+>   `adapter.rooms` берём через `client.nsp.adapter`.
+> - Endpoint'ов **20, а не 18**: `GET /chats/:id/messages` и `DELETE .../reaction` в ТЗ подразумеваются, но в счёт «18» не вошли.
 
 ## Фаза 10 — Notifications (5 endpoints)
 - [ ] `EventEmitter2` → `NotificationService` → БД + Socket.IO push

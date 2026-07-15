@@ -17,8 +17,10 @@ import { AuthModule } from './modules/auth/auth.module';
 import { CloseFriendsModule } from './modules/close-friends/close-friends.module';
 import { FollowModule } from './modules/follow/follow.module';
 import { MusicModule } from './modules/music/music.module';
+import { ChatModule } from './modules/chat/chat.module';
 import { NotesModule } from './modules/notes/notes.module';
 import { PostsModule } from './modules/posts/posts.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 import { StoriesModule } from './modules/stories/stories.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { UploadModule } from './modules/upload/upload.module';
@@ -49,6 +51,8 @@ import { UsersModule } from './modules/users/users.module';
     PostsModule,
     StoriesModule,
     NotesModule,
+    RealtimeModule,
+    ChatModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
