@@ -375,20 +375,48 @@
 > - Endpoint'ов **20, а не 18**: `GET /chats/:id/messages` и `DELETE .../reaction` в ТЗ подразумеваются, но в счёт «18» не вошли.
 
 ## Фаза 10 — Notifications (5 endpoints)
-- [ ] `EventEmitter2` → `NotificationService` → БД + Socket.IO push
-- [ ] Все типы: `LIKE_POST · COMMENT_POST · REPLY_COMMENT · LIKE_COMMENT · MENTION · FOLLOW · FOLLOW_REQUEST · FOLLOW_ACCEPTED · LIKE_STORY · STORY_REACTION · STORY_REPLY · SHARE_POST · SAVE_POST · TAG_POST · PROFILE_VIEW · NEW_POST_FROM_FOLLOWING · VERIFICATION_TRIAL_ENDING`
-- [ ] **Группировка**: «user1 и ещё 5 оценили вашу публикацию»
-- [ ] `ProfileView` — «кто заходил в твой профиль» (не чаще 1 записи/сутки на пару)
-- [ ] `unread-count`, `read`, `read-all`
-- [ ] Себя не уведомляем, заблокированные не уведомляют
-- ✅ Лайк с другого аккаунта → уведомление прилетает в сокет **мгновенно**
+- [x] `EventEmitter2` → `NotificationService` → БД + Socket.IO push
+- [x] Все типы: `LIKE_POST · COMMENT_POST · REPLY_COMMENT · LIKE_COMMENT · MENTION · FOLLOW · FOLLOW_REQUEST · FOLLOW_ACCEPTED · LIKE_STORY · STORY_REACTION · STORY_REPLY · SHARE_POST · SAVE_POST · TAG_POST · PROFILE_VIEW · NEW_POST_FROM_FOLLOWING · VERIFICATION_TRIAL_ENDING`
+- [x] **Группировка**: «user1 и ещё 5 оценили вашу публикацию»
+- [x] `ProfileView` — «кто заходил в твой профиль» (не чаще 1 записи/сутки на пару)
+- [x] `unread-count`, `read`, `read-all`
+- [x] Себя не уведомляем, заблокированные не уведомляют
+- ⏳ Лайк с другого аккаунта → уведомление прилетает в сокет **мгновенно** — код готов, живой прогон НЕ выполнен (Docker не запущен)
+
+> Заметки Фазы 10:
+> - **Статус: код завершён и проверен по коду; живой end-to-end прогон ОТЛОЖЕН** (Postgres/Redis/MinIO не подняты — Docker Desktop выключен).
+> - `NotificationService` — единственная точка записи: `@OnEvent(NOTIFY_EVENT)`. Правила «себя не уведомляем»
+>   и «блок не уведомляет» проверяются здесь централизованно (не в каждом сервисе).
+> - Эмиттеры `NOTIFY_EVENT` подтверждены в коде: follow (FOLLOW/FOLLOW_REQUEST/FOLLOW_ACCEPTED),
+>   posts (LIKE_POST/SAVE_POST/SHARE_POST/MENTION/TAG_POST/NEW_POST_FROM_FOLLOWING),
+>   comments (COMMENT_POST/REPLY_COMMENT/LIKE_COMMENT/MENTION), notes (LIKE_NOTE/REPLY_NOTE),
+>   stories (LIKE_STORY/STORY_REACTION/STORY_REPLY), profile (PROFILE_VIEW).
+> - `VERIFICATION_TRIAL_ENDING` — тип и текст готовы, эмитится cron'ом Фазы 12 (ещё не реализован).
+> - Группировка: окно 300, ключ = тип+цель, уникальные акторы → «actor и ещё N».
+> - Пуш: `notification:new` = { notification, unreadCount } мгновенно получателю через RealtimeService.
+> - **Что осталось для честного `[x]` на ✅-строке:** поднять Docker → like с 2-го аккаунта →
+>   убедиться, что строка в БД + `GET /notifications` + `unread-count`=1 + сокет-пуш пришёл;
+>   проверить self→нет, block→нет, 2 актора→«и ещё 1».
 
 ## Фаза 11 — Search + Explore (4 endpoints)
-- [ ] `GET /search?q=` — аккаунты + хэштеги + локации одним ответом
-- [ ] `GET /search/explore` — сетка: посты и **видео вперемешку**, с `likesCount` / `commentsCount` (для hover на фронте)
-- [ ] `GET /search/hashtag/:name`, `GET /search/top` (тренды)
-- [ ] Full-text (Postgres `tsvector`) или `ILIKE` + индексы
-- ✅ Поиск «er» находит `eraj`, `amERica`, `chessmastER`
+- [x] `GET /search?q=` — аккаунты + хэштеги + локации одним ответом
+- [x] `GET /search/explore` — сетка: посты и **видео вперемешку**, с `likesCount` / `commentsCount` (для hover на фронте)
+- [x] `GET /search/hashtag/:name`, `GET /search/top` (тренды)
+- [x] Full-text: `ILIKE` (insensitive contains) + существующие индексы (userName, fullName, Hashtag.name, Location.city/country)
+- ✅ Поиск «er» находит `eraj`, `amerika`, `chessmaster` — проверено живым запросом (все три в выдаче)
+
+> Заметки Фазы 11:
+> - **Проверено живьём (curl, seed 20 юзеров / 100 постов / 30 локаций):**
+>   - `q=er` → users: [amerika, chessmaster, daler, eraj, sherzod] — три обязательных найдены (подстрока по userName И fullName).
+>   - `q=trav` → hashtags: [(travel, 16)]; локации по city/state/country (Berlin, Amsterdam…).
+>   - `/search/explore` → VIDEO+IMAGE вперемешку, likesCount/commentsCount есть, cursor (nextCursor), свои посты (eraj) исключены.
+>   - `/search/hashtag/travel` → все посты содержат #travel (в seed нет #tj — использован реальный тег).
+>   - **BlockGuard:** eraj блокирует daler → daler исчезает и из `/search`, и из `/search/explore`; после снятия блока — возвращается.
+>   - Envelope: `q=` (пусто) → 400, `errors: ["q should not be empty"]` (не `["success"]`).
+> - **Explore не дублирован** — `/search/explore` и `/search/hashtag/:name` делегируют в `PostsService.explore` (Фаза 6): один источник правды.
+> - **Миграция Prisma не потребовалась** — поиск на ILIKE поверх существующих индексов (GIN/tsvector отложены до нагрузочного теста Фазы 13, если понадобится).
+> - **PrivacyGuard:** приватные аккаунты видны в `/search` (как в IG), но их посты не попадают в explore/hashtag (фильтр внутри PostsService.explore).
+> - `/search/top`: тренд-хэштеги = использование за 7 дней (groupBy PostHashtag), аккаунты недели = прирост ACCEPTED-подписчиков за 7 дней; у обоих честный фолбэк на общий топ, если за неделю пусто.
 
 ## Фаза 12 — Locations + Verification + Admin (13 endpoints)
 - [ ] Locations CRUD — **`PUT` работает** (в старом API 400 AutoMapper)
