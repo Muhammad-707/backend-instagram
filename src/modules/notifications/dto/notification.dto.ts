@@ -39,7 +39,10 @@ export class NotificationDto {
   @ApiProperty({ example: false })
   isRead!: boolean;
 
-  @ApiProperty({ type: [Number], description: 'id всех уведомлений группы — для пометки прочитанными' })
+  @ApiProperty({
+    type: [Number],
+    description: 'id всех уведомлений группы — для пометки прочитанными',
+  })
   groupIds!: number[];
 
   @ApiProperty()

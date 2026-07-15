@@ -2,12 +2,7 @@ import { Controller, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/commo
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
-import {
-  NotificationDto,
-  OkDto,
-  ProfileViewDto,
-  UnreadCountDto,
-} from './dto/notification.dto';
+import { NotificationDto, OkDto, ProfileViewDto, UnreadCountDto } from './dto/notification.dto';
 import { NotificationsService } from './notifications.service';
 
 @ApiBearerAuth()
