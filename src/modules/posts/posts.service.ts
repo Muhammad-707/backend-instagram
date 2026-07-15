@@ -6,8 +6,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { FollowStatus, MediaType, NotifType, Prisma, ReportTargetType } from '@prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
+import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
 import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FileValidator } from '../../storage/file-validator';
@@ -70,6 +72,7 @@ export class PostsService {
     private readonly media: MediaService,
     private readonly validator: FileValidator,
     private readonly chat: ChatUtilService,
+    private readonly events: EventEmitter2,
     config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -141,7 +144,8 @@ export class PostsService {
       // Хэштеги, упоминания и уведомления — после создания поста, ему нужен id.
       await this.linkHashtags(post.id, dto.caption);
       await this.linkMentions(post.id, userId, dto.caption);
-      await this.notifyTagged(post.id, userId, dto.taggedUserIds);
+      this.notifyTagged(post.id, userId, dto.taggedUserIds);
+      await this.notifyNewPost(post.id, userId);
 
       if (dto.musicId) {
         await this.prisma.music.update({
@@ -311,7 +315,7 @@ export class PostsService {
       await this.prisma.postLike.delete({ where: { id: existing.id } });
     } else {
       await this.prisma.postLike.create({ data: { postId, userId } });
-      await this.notify(post.userId, userId, NotifType.LIKE_POST, { postId });
+      this.notify(post.userId, userId, NotifType.LIKE_POST, { postId });
     }
 
     const likesCount = await this.prisma.postLike.count({ where: { postId } });
@@ -354,7 +358,7 @@ export class PostsService {
     postId: number,
     collectionName?: string,
   ): Promise<FavoriteToggleDto> {
-    await this.loadVisiblePost(userId, postId);
+    const post = await this.loadVisiblePost(userId, postId);
 
     const existing = await this.prisma.favorite.findUnique({
       where: { postId_userId: { postId, userId } },
@@ -379,6 +383,7 @@ export class PostsService {
     }
 
     await this.prisma.favorite.create({ data: { postId, userId, collectionId } });
+    this.notify(post.userId, userId, NotifType.SAVE_POST, { postId });
     return { favorited: true };
   }
 
@@ -409,7 +414,7 @@ export class PostsService {
       data: { chatId: chat.id, senderId: userId, type: 'POST_SHARE', sharedPostId: postId },
     });
     await this.prisma.share.create({ data: { postId, userId, toUserId } });
-    await this.notify(post.userId, userId, NotifType.SHARE_POST, { postId });
+    this.notify(post.userId, userId, NotifType.SHARE_POST, { postId });
 
     return { link, chatId: chat.id, message: 'Публикация отправлена в чат' };
   }
@@ -479,31 +484,39 @@ export class PostsService {
 
     for (const u of users) {
       await this.prisma.mention.create({ data: { postId, userId: u.id } });
-      await this.notify(u.id, actorId, NotifType.MENTION, { postId });
+      this.notify(u.id, actorId, NotifType.MENTION, { postId });
     }
   }
 
-  private async notifyTagged(
-    postId: number,
-    actorId: string,
-    taggedUserIds?: string[],
-  ): Promise<void> {
+  private notifyTagged(postId: number, actorId: string, taggedUserIds?: string[]): void {
     for (const id of taggedUserIds ?? []) {
-      await this.notify(id, actorId, NotifType.TAG_POST, { postId });
+      this.notify(id, actorId, NotifType.TAG_POST, { postId });
     }
   }
 
-  /** Себя не уведомляем; заблокированные друг друга не тревожат (ТЗ §5.13). */
-  private async notify(
+  /** «Новая публикация от того, на кого вы подписаны» — уведомляем принятых подписчиков автора. */
+  private async notifyNewPost(postId: number, authorId: string): Promise<void> {
+    const followers = await this.prisma.follow.findMany({
+      where: { followingId: authorId, status: FollowStatus.ACCEPTED },
+      select: { followerId: true },
+    });
+    for (const f of followers) {
+      this.notify(f.followerId, authorId, NotifType.NEW_POST_FROM_FOLLOWING, { postId });
+    }
+  }
+
+  /**
+   * Эмитим событие — NotificationsService (единственная точка) решит про себя/блок,
+   * запишет в БД и мгновенно пушнёт в сокет. Возвращаемого значения нет: это fire-and-forget,
+   * уведомление не должно тормозить лайк/коммент.
+   */
+  private notify(
     userId: string,
     actorId: string,
     type: NotifType,
     extra: { postId?: number; commentId?: number } = {},
-  ): Promise<void> {
-    if (userId === actorId) return;
-    if (await this.access.isBlockedBetween(userId, actorId)) return;
-
-    await this.prisma.notification.create({ data: { userId, actorId, type, ...extra } });
+  ): void {
+    this.events.emit(NOTIFY_EVENT, { userId, actorId, type, ...extra } satisfies NotifyPayload);
   }
 
   /** Мои лайки/избранное — одним запросом на всю страницу, без N+1. */

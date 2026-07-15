@@ -4,10 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { FollowStatus, NotifType, Prisma } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
 import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
 import {
   BlockedUserDto,
   FollowerDto,
@@ -33,6 +35,7 @@ export class FollowService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: AccessService,
+    private readonly events: EventEmitter2,
   ) {}
 
   // ─────────────── подписка ───────────────
@@ -61,17 +64,14 @@ export class FollowService {
     // Публичный → сразу ACCEPTED. Приватный → PENDING, ждёт подтверждения владельца.
     const status = target.isPrivate ? FollowStatus.PENDING : FollowStatus.ACCEPTED;
 
-    await this.prisma.$transaction([
-      this.prisma.follow.create({ data: { followerId, followingId, status } }),
-      this.prisma.notification.create({
-        data: {
-          userId: followingId,
-          actorId: followerId,
-          // Разные типы: на заявку жмут «Подтвердить», на подписку — нет.
-          type: target.isPrivate ? NotifType.FOLLOW_REQUEST : NotifType.FOLLOW,
-        },
-      }),
-    ]);
+    await this.prisma.follow.create({ data: { followerId, followingId, status } });
+
+    // Разные типы: на заявку жмут «Подтвердить», на подписку — нет.
+    this.events.emit(NOTIFY_EVENT, {
+      userId: followingId,
+      actorId: followerId,
+      type: target.isPrivate ? NotifType.FOLLOW_REQUEST : NotifType.FOLLOW,
+    } satisfies NotifyPayload);
 
     return this.result(
       status,
@@ -109,20 +109,16 @@ export class FollowService {
   async accept(userId: string, requestId: string): Promise<OkMessageDto> {
     const req = await this.loadOwnRequest(userId, requestId);
 
-    await this.prisma.$transaction([
-      this.prisma.follow.update({
-        where: { id: req.id },
-        data: { status: FollowStatus.ACCEPTED },
-      }),
-      // Уведомляем того, кто просился: «вашу заявку приняли».
-      this.prisma.notification.create({
-        data: {
-          userId: req.followerId,
-          actorId: userId,
-          type: NotifType.FOLLOW_ACCEPTED,
-        },
-      }),
-    ]);
+    await this.prisma.follow.update({
+      where: { id: req.id },
+      data: { status: FollowStatus.ACCEPTED },
+    });
+    // Уведомляем того, кто просился: «вашу заявку приняли».
+    this.events.emit(NOTIFY_EVENT, {
+      userId: req.followerId,
+      actorId: userId,
+      type: NotifType.FOLLOW_ACCEPTED,
+    } satisfies NotifyPayload);
     return { message: 'Заявка принята' };
   }
 

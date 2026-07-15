@@ -9,8 +9,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { FollowStatus, MediaType, MsgType, NotifType, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
+import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
 import {
   DeleteExpiredStoryPayload,
   JOB_DELETE_EXPIRED_STORY,
@@ -75,6 +77,7 @@ export class StoriesService {
     private readonly media: MediaService,
     private readonly validator: FileValidator,
     private readonly chat: ChatUtilService,
+    private readonly events: EventEmitter2,
     @InjectQueue(STORIES_QUEUE) private readonly queue: Queue<DeleteExpiredStoryPayload>,
     config: ConfigService,
   ) {
@@ -328,7 +331,7 @@ export class StoriesService {
       await this.prisma.storyLike.delete({ where: { id: existing.id } });
     } else {
       await this.prisma.storyLike.create({ data: { storyId: id, userId: viewerId } });
-      await this.notify(story.userId, viewerId, NotifType.LIKE_STORY, id);
+      this.notify(story.userId, viewerId, NotifType.LIKE_STORY, id);
     }
 
     const likesCount = await this.prisma.storyLike.count({ where: { storyId: id } });
@@ -360,7 +363,7 @@ export class StoriesService {
     await this.prisma.storyReaction.create({
       data: { storyId: id, userId: viewerId, emoji, messageId: message.id },
     });
-    await this.notify(story.userId, viewerId, NotifType.STORY_REACTION, id);
+    this.notify(story.userId, viewerId, NotifType.STORY_REACTION, id);
 
     return { sent: true, chatId: chat.id, messageId: message.id };
   }
@@ -387,7 +390,7 @@ export class StoriesService {
     await this.prisma.storyReply.create({
       data: { storyId: id, userId: viewerId, text, messageId: message.id },
     });
-    await this.notify(story.userId, viewerId, NotifType.STORY_REPLY, id);
+    this.notify(story.userId, viewerId, NotifType.STORY_REPLY, id);
 
     return { sent: true, chatId: chat.id, messageId: message.id };
   }
@@ -585,15 +588,8 @@ export class StoriesService {
     }
   }
 
-  private async notify(
-    userId: string,
-    actorId: string,
-    type: NotifType,
-    storyId: number,
-  ): Promise<void> {
-    if (userId === actorId) return;
-    if (await this.access.isBlockedBetween(userId, actorId)) return;
-    await this.prisma.notification.create({ data: { userId, actorId, type, storyId } });
+  private notify(userId: string, actorId: string, type: NotifType, storyId: number): void {
+    this.events.emit(NOTIFY_EVENT, { userId, actorId, type, storyId } satisfies NotifyPayload);
   }
 
   private toBrief(u: UserBriefRow): UserBriefDto {

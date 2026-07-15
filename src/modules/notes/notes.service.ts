@@ -5,10 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { FollowStatus, MsgType, NotifType, Prisma } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
 import { UserBriefDto } from '../users/dto/users.dto';
 import {
   CreateNoteDto,
@@ -57,6 +59,7 @@ export class NotesService {
     private readonly prisma: PrismaService,
     private readonly access: AccessService,
     private readonly chat: ChatUtilService,
+    private readonly events: EventEmitter2,
     config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -155,7 +158,7 @@ export class NotesService {
       await this.prisma.noteLike.delete({ where: { id: existing.id } });
     } else {
       await this.prisma.noteLike.create({ data: { noteId: id, userId } });
-      await this.notify(note.userId, userId, NotifType.LIKE_NOTE, id);
+      this.notify(note.userId, userId, NotifType.LIKE_NOTE, id);
     }
 
     const likesCount = await this.prisma.noteLike.count({ where: { noteId: id } });
@@ -212,7 +215,7 @@ export class NotesService {
     await this.prisma.noteReply.create({
       data: { noteId: id, userId, text, messageId: message.id },
     });
-    await this.notify(note.userId, userId, NotifType.REPLY_NOTE, id);
+    this.notify(note.userId, userId, NotifType.REPLY_NOTE, id);
 
     return { sent: true, chatId: chat.id, messageId: message.id };
   }
@@ -272,15 +275,8 @@ export class NotesService {
     return new Set(rows.map((r) => r.noteId));
   }
 
-  private async notify(
-    userId: string,
-    actorId: string,
-    type: NotifType,
-    noteId: number,
-  ): Promise<void> {
-    if (userId === actorId) return;
-    if (await this.access.isBlockedBetween(userId, actorId)) return;
-    await this.prisma.notification.create({ data: { userId, actorId, type, noteId } });
+  private notify(userId: string, actorId: string, type: NotifType, noteId: number): void {
+    this.events.emit(NOTIFY_EVENT, { userId, actorId, type, noteId } satisfies NotifyPayload);
   }
 
   private toDto(row: NoteRow, viewerId: string, isLiked: boolean): NoteDto {

@@ -1,8 +1,10 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { NotifType, Prisma } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
 import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
 import { UserBriefDto } from '../users/dto/users.dto';
 import { parseMentions } from './content-parser';
 import { CommentDto, CommentLikeToggleDto, DeletedDto } from './dto/comment.dto';
@@ -38,6 +40,7 @@ export class CommentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: AccessService,
+    private readonly events: EventEmitter2,
   ) {}
 
   async add(userId: string, postId: number, text: string, parentId?: number): Promise<CommentDto> {
@@ -68,13 +71,13 @@ export class CommentsService {
         select: { userId: true },
       });
       if (parent) {
-        await this.notify(parent.userId, userId, NotifType.REPLY_COMMENT, {
+        this.notify(parent.userId, userId, NotifType.REPLY_COMMENT, {
           postId,
           commentId: comment.id,
         });
       }
     } else {
-      await this.notify(post.userId, userId, NotifType.COMMENT_POST, {
+      this.notify(post.userId, userId, NotifType.COMMENT_POST, {
         postId,
         commentId: comment.id,
       });
@@ -184,7 +187,7 @@ export class CommentsService {
       await this.prisma.commentLike.delete({ where: { id: existing.id } });
     } else {
       await this.prisma.commentLike.create({ data: { commentId, userId } });
-      await this.notify(comment.userId, userId, NotifType.LIKE_COMMENT, {
+      this.notify(comment.userId, userId, NotifType.LIKE_COMMENT, {
         postId: comment.postId,
         commentId,
       });
@@ -231,19 +234,17 @@ export class CommentsService {
 
     for (const u of users) {
       await this.prisma.mention.create({ data: { commentId, userId: u.id } });
-      await this.notify(u.id, actorId, NotifType.MENTION, { postId, commentId });
+      this.notify(u.id, actorId, NotifType.MENTION, { postId, commentId });
     }
   }
 
-  private async notify(
+  private notify(
     userId: string,
     actorId: string,
     type: NotifType,
     extra: { postId?: number; commentId?: number },
-  ): Promise<void> {
-    if (userId === actorId) return;
-    if (await this.access.isBlockedBetween(userId, actorId)) return;
-    await this.prisma.notification.create({ data: { userId, actorId, type, ...extra } });
+  ): void {
+    this.events.emit(NOTIFY_EVENT, { userId, actorId, type, ...extra } satisfies NotifyPayload);
   }
 
   private toDto(

@@ -1,8 +1,10 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { FollowStatus, Prisma } from '@prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { FollowStatus, NotifType, Prisma } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
 import { buildCursorPage, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
 import { FileValidator } from '../../storage/file-validator';
 import { MediaService } from '../../storage/media.service';
 import { StorageService } from '../../storage/storage.service';
@@ -53,6 +55,7 @@ export class ProfileService {
     private readonly storage: StorageService,
     private readonly media: MediaService,
     private readonly validator: FileValidator,
+    private readonly events: EventEmitter2,
   ) {}
 
   // ─────────────── просмотр профиля ───────────────
@@ -344,6 +347,12 @@ export class ProfileService {
     if (recent) return;
 
     await this.prisma.profileView.create({ data: { viewerId, profileUserId } });
+    // Уведомление «кто заходил в профиль» — раз в сутки на пару (тот же порог, что и запись).
+    this.events.emit(NOTIFY_EVENT, {
+      userId: profileUserId,
+      actorId: viewerId,
+      type: NotifType.PROFILE_VIEW,
+    } satisfies NotifyPayload);
   }
 
   private toProfile(row: ProfileRow): ProfileDto {
