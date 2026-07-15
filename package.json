@@ -22,7 +22,9 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
-    "music:import": "ts-node -r dotenv/config scripts/music-import.ts"
+    "music:import": "ts-node -r dotenv/config scripts/music-import.ts",
+    "swagger:export": "ts-node -r dotenv/config scripts/export-swagger.ts",
+    "endpoints:report": "ts-node scripts/endpoints-report.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

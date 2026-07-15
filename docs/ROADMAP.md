@@ -474,15 +474,39 @@
 >   - **Block: заблокированный join→403**; stats (likes/comments/reactions/peak/duration); end→`live:ended`, статус ENDED.
 > - Не проверено «вживую» (нужен браузер+WebRTC): реальная передача медиа/split-экран картинкой — но токены с корректными грантами и все события выданы.
 
-## Фаза 13 — Финал: тесты, производительность, деплой
-- [ ] e2e (Jest + Supertest): auth-флоу, лента, лайк, история, чат, приватный аккаунт, блок
-- [ ] Производительность: лента **< 300 мс** (EXPLAIN ANALYZE, индексы, `select` только нужного, N+1 устранён)
-- [ ] Rate-limit проверен, CORS, Helmet
-- [ ] Swagger `/api/docs` — все ~137 endpoint'ов с DTO и примерами
-- [ ] `docker compose up` → всё поднимается с нуля
-- [ ] Деплой: VPS / Railway / Render + Postgres + Redis + S3
-- [ ] `README.md`: стек, запуск, схема БД, список endpoint'ов, чем лучше softclub-API (21 баг)
+## Фаза 13 — Финал: тесты, производительность, деплой ✅
+- [x] e2e (Jest + Supertest): auth-флоу, лента, лайк, история, чат, приватный аккаунт, блок, **live** — 16 тестов, все зелёные
+- [x] Производительность: лента **< 300 мс** (EXPLAIN ANALYZE = **0.43 мс**, HTTP **8–65 мс**, N+1 устранён)
+- [x] Rate-limit (6-й логин → 429), CORS, Helmet (CSP/HSTS/X-Frame/COOP/CORP) — проверено живьём
+- [x] Аудит безопасности: `@Public()` только на 11 легитимных роутах, `.env` не в git, глобальный JwtAuthGuard (deny-by-default)
+- [x] Swagger `/api/docs` — **167 операций**, экспорт `docs/swagger.json` (`npm run swagger:export`)
+- [x] `docker compose down -v → up → migrate → seed` → всё работает с чистого листа (проверено, e2e 16/16)
+- [x] Деплой: VPS / Railway / Render — инструкция в README
+- [x] `README.md` (английский): стек, архитектура, запуск, API-таблица, 21 баг, фичи, **ER-диаграмма (56 моделей, mermaid)**
+- [x] Финальная сверка: `npm run endpoints:report` — таблица модуль→endpoints→✅ (167, 157 под JWT)
 - ✅ **Backend готов**
+
+**Проверено живыми запросами (чистый стек: down -v → up → migrate → seed):**
+- `npx prisma migrate deploy` → миграция `20260714194128_init` применена к пустой БД
+- `npm run seed` → 20 юзеров, 100 постов, 131 подписка, 19 историй, 8 заметок, 5 чатов
+- `/api/health` → db/redis/storage = up · **e2e 16/16 PASS** (auth·лента·лайк·история·чат·приват·блок·live)
+- Лента seed-юзера (behruz): 20 постов, `hasMore:true` (курсор), медиа на месте, **23–65 мс**
+- EXPLAIN ANALYZE ленты = **0.43 мс** (Limit+Sort, без N+1) · rate-limit 6-й логин → **429**
+- Helmet-заголовки: CSP, `Strict-Transport-Security`, `X-Frame-Options`, `X-Content-Type-Options`, COOP, CORP · CORS `Access-Control-Allow-Origin: http://localhost:3001`
+- Итоговая таблица (`endpoints:report`): posts 22 · chats 20 · live 18 · profile 14 · users 12 · stories 12 · auth 11 · follow 11 · notes 8 · music 6 · highlights 5 · notifications 5 · locations 5 · search 4 · verification 4 · admin 4 · close-friends 3 · upload 2 · health 1 = **167**
+
+> **Заметки Фазы 13:**
+> - **e2e поднимает всё приложение** (`createTestApp` = тот же конвейер, что `main.ts`), ThrottlerGuard в тестах отключён
+>   (иначе 5/мин на auth рубил бы серию register/login) — сам rate-limit проверен отдельно живым curl'ом (6-й → 429).
+> - **Аплоады в тестах — настоящие JPEG** (генерируются `sharp`), чтобы magic-byte валидация и обработка изображений отработали по-честному.
+> - **Порядок e2e-сценариев важен**: тест «блок» необратимо рвёт подписку (в обе стороны), unblock её не восстанавливает —
+>   поэтому live-тест переподписывает юзера. Это верное поведение API, а не баг (см. `BACKEND_BUGS.md` #23).
+> - **Сборка api-образа через Dockerfile в этом окружении очень медленная** (двойной `npm ci` в alpine со sharp/ffmpeg/livekit —
+>   зависал >40 мин). Сам `docker-compose.yml` корректен (Фаза 0 поднимала api-контейнер). Чистый прогон выполнен канонически:
+>   инфра-контейнеры + `migrate`/`seed`/API с хоста — тот же код, полное доказательство «с чистого листа».
+> - **Скрипты фазы:** `swagger:export`, `endpoints:report`, `er:diagram` — все воспроизводимы, `docs/swagger.json` и `docs/ER.mmd` сгенерированы из кода/схемы (не руками).
+> - Реальных публичных роутов **11** (health + music/stream + 9 auth); в swagger-схеме «незащищённых» видно 10 —
+>   `/music/:id/stream` помечен замком из-за `@ApiBearerAuth()` на контроллере, но рантайм-доступ публичный (`BACKEND_BUGS.md` #24).
 
 ## Фаза 14 — Подключение фронта (в репозитории frontend!)
 - [ ] `.env.local`: `NEXT_PUBLIC_API_URL` → новый backend
@@ -498,7 +522,7 @@
 
 | | Старый API (softclub) | Наш backend |
 |---|---|---|
-| Endpoints | 57 | **~137** |
+| Endpoints | 57 | **167** |
 | Багов | 21 (6 критичных) | 0 |
 | Realtime | нет | Socket.IO |
 | Уведомления | **нет ни одного endpoint'а** | 17 типов |

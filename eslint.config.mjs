@@ -32,4 +32,17 @@ export default tseslint.config(
       '@typescript-eslint/explicit-module-boundary-types': 'off',
     },
   },
+  {
+    // e2e-тесты дёргают HTTP и читают res.body (тип any у supertest) — точечно
+    // ослабляем unsafe-правила, чтобы ассерты не тонули в приведениях типов.
+    // Продакшн-код (src/) правила не касаются — там any по-прежнему запрещён.
+    files: ['test/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+    },
+  },
 );
