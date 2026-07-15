@@ -1,0 +1,27 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { VerificationStatus } from '@prisma/client';
+
+export class VerificationStatusDto {
+  @ApiPropertyOptional({
+    enum: VerificationStatus,
+    nullable: true,
+    description: 'null — верификация ни разу не оформлялась',
+    example: VerificationStatus.TRIAL,
+  })
+  status!: VerificationStatus | null;
+
+  @ApiProperty({ example: true, description: 'Стоит ли синяя галочка прямо сейчас' })
+  isVerified!: boolean;
+
+  @ApiProperty({ example: false, description: 'Использован ли бесплатный триал (даётся 1 раз)' })
+  trialUsed!: boolean;
+
+  @ApiPropertyOptional({ nullable: true, example: 6, description: 'Дней до конца триала/периода' })
+  daysLeft!: number | null;
+
+  @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
+  trialEndsAt!: Date | null;
+
+  @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
+  currentPeriodEnd!: Date | null;
+}

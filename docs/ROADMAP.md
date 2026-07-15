@@ -424,11 +424,24 @@
 > - `/search/top`: тренд-хэштеги = использование за 7 дней (groupBy PostHashtag), аккаунты недели = прирост ACCEPTED-подписчиков за 7 дней; у обоих честный фолбэк на общий топ, если за неделю пусто.
 
 ## Фаза 12 — Locations + Verification + Admin (13 endpoints)
-- [ ] Locations CRUD — **`PUT` работает** (в старом API 400 AutoMapper)
-- [ ] Verification: `status`, `start-trial` (**7 дней бесплатно, 1 раз**), `subscribe` (**mock-платёж $1000/мес**), `cancel`
-- [ ] Cron: за 1 день до конца триала → уведомление «Ваше время вышло — купите, иначе галочка снимется»; по истечении → `isVerified = false`
-- [ ] Admin: users, delete user, reports, resolve
-- ✅ Триал → галочка появляется → через 7 дней снимается
+- [x] Locations CRUD — **`PUT` работает** (в старом API 400 AutoMapper) — проверено: PUT → 200, city обновлён
+- [x] Verification: `status`, `start-trial` (**7 дней бесплатно, 1 раз**), `subscribe` (**mock-платёж $1000/мес**), `cancel`
+- [x] Cron: за 1 день до конца триала → уведомление `VERIFICATION_TRIAL_ENDING`; по истечении → `isVerified = false`
+- [x] Admin: users, delete user, reports, resolve — `RolesGuard` (не ADMIN → 403)
+- ✅ Триал → галочка появляется → cron по истечении снимает (проверено: isVerified true→false, status EXPIRED)
+
+> Заметки Фазы 12:
+> - **Новый `RolesGuard` + `@Roles(Role.ADMIN)`** (`src/common/`) — раньше в проекте не было. Работает после глобального JwtAuthGuard.
+> - **Locations CRUD** — доступно любому авторизованному (ТЗ роль не требует). `PUT` — полная замена, существование проверяем явно (иначе Prisma P2025). Удаление безопасно: у постов `locationId → null` (onDelete SetNull).
+> - **Verification:** одна строка на юзера (`@id userId`). `trialUsed` — триал ровно 1 раз. `subscribe` → Payment(MOCK, PAID, $1000) + период 30 дней. `cancel` → CANCELED, галочка держится до конца периода, снимает cron.
+> - **Cron** `VerificationCron` (EVERY_DAY_AT_MIDNIGHT) → `VerificationService.sweepExpired()` (логика вынесена, чтобы тестировать без ожидания полуночи). Системное уведомление шлётся через новый `NotificationsService.notifySystem()` (actorId=userId, обходит правило «себя не уведомляем» — это сообщение системы).
+> - **Живая проверка (14 REST + cron, docker up):**
+>   - Locations: POST→201, **PUT→200 city обновлён**, GET подтверждает, DELETE→200. ✅
+>   - Verification (jasur): чистый status=null → start-trial→TRIAL/isVerified=true/daysLeft=7 → повтор→**400** «триал уже использован» → subscribe→ACTIVE + Payment(PAID,MOCK)=1 → cancel→CANCELED. ✅
+>   - Admin: GET /admin/users(ADMIN)→200, тот же обычным юзером→**403**, reports open→resolve→resolvedAt SET, delete user→isDeleted=true. ✅
+>   - Cron: malika TRIAL с trialEndsAt=вчера → sweepExpired() → **isVerified true→false, status EXPIRED**. ✅
+> - Не проверялось живьём в сокет: само уведомление VERIFICATION_TRIAL_ENDING (окно «за 1 день»); логика есть, эмиттер тот же notifySystem, что уже проверен в Фазе 10.
+> - **13 endpoint'ов ровно по ТЗ** (locations 5 + verification 4 + admin 4).
 
 ## Фаза 12.5 — LIVE (Прямые эфиры, 18 endpoints) — см. docs/TZ_LIVE_NOTES.md ЧАСТЬ B
 - [ ] LiveKit в docker-compose + LiveKitService (publisher / subscriber токены)

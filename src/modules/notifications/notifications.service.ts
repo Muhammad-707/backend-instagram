@@ -93,6 +93,22 @@ export class NotificationsService {
     });
   }
 
+  /**
+   * Системное уведомление самому пользователю (VERIFICATION_TRIAL_ENDING и т.п.) — без человека-актора.
+   * Обходит правило «себя не уведомляем» намеренно: это сообщение от системы, а не действие юзера.
+   */
+  async notifySystem(userId: string, type: NotifType): Promise<void> {
+    const notif = await this.prisma.notification.create({
+      data: { userId, actorId: userId, type },
+      select: NOTIF_SELECT,
+    });
+    const unread = await this.unreadCount(userId);
+    this.realtime.emitToUser(userId, 'notification:new', {
+      notification: this.toDto([notif]),
+      unreadCount: unread.count,
+    });
+  }
+
   // ─────────────── чтение ───────────────
 
   /**
