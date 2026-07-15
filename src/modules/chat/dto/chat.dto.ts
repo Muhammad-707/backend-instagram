@@ -13,6 +13,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { CursorDto } from '../../../common/pagination/cursor.dto';
+import { IsEmoji } from '../../../common/validators/is-emoji.decorator';
 import { UserBriefDto } from '../../users/dto/users.dto';
 
 export const MESSAGE_MAX = 2000;
@@ -74,10 +75,8 @@ export class BulkDeleteDto {
 }
 
 export class ReactionDto {
-  @ApiProperty({ example: '❤️' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(8)
+  @ApiProperty({ example: '❤️', description: 'Любой эмодзи, включая составные (👨‍👩‍👧‍👦, 🏳️‍🌈, 👍🏽)' })
+  @IsEmoji()
   emoji!: string;
 }
 

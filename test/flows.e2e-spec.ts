@@ -14,6 +14,7 @@ describe('Core flows (e2e)', () => {
   let userC: TestUser; // станет приватным
   let img: Buffer;
   let postId: number;
+  let messageId: number;
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -106,6 +107,30 @@ describe('Core flows (e2e)', () => {
       .field('text', 'привет из e2e')
       .expect(201);
     expect(msg.body.data.text).toBe('привет из e2e');
+    messageId = msg.body.data.id as number;
+  });
+
+  it('реакция ЛЮБЫМ эмодзи, включая составные (семья/флаг/тон кожи), текст → 400', async () => {
+    // Составной эмодзи (семья, 11 UTF-16 единиц) — раньше @MaxLength(8) отвергал его.
+    await request(http)
+      .post(`/api/chats/messages/${messageId}/reaction`)
+      .set('Authorization', auth(userB))
+      .send({ emoji: '👨‍👩‍👧‍👦' })
+      .expect(201);
+
+    // Флаг страны и тон кожи — тоже проходят.
+    await request(http)
+      .post(`/api/chats/messages/${messageId}/reaction`)
+      .set('Authorization', auth(userB))
+      .send({ emoji: '👍🏽' })
+      .expect(201);
+
+    // Не эмодзи → 400 (реакция остаётся реакцией, а не абзацем текста).
+    await request(http)
+      .post(`/api/chats/messages/${messageId}/reaction`)
+      .set('Authorization', auth(userB))
+      .send({ emoji: 'hello' })
+      .expect(400);
   });
 
   it('приватный аккаунт: PENDING → 403 на контент → accept → 200', async () => {

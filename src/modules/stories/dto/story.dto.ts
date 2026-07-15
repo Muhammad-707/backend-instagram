@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { MediaType } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEmoji } from '../../../common/validators/is-emoji.decorator';
 import { UserBriefDto } from '../../users/dto/users.dto';
 
 export const MAX_STORY_FILES = 10;
@@ -51,10 +52,11 @@ export class CreateStoryDto {
 }
 
 export class ReactionDto {
-  @ApiProperty({ example: '❤️', description: 'Эмодзи-реакция' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(8)
+  @ApiProperty({
+    example: '❤️',
+    description: 'Любой эмодзи-реакция, включая составные (👨‍👩‍👧‍👦, 🏳️‍🌈, 👍🏽)',
+  })
+  @IsEmoji()
   emoji!: string;
 }
 

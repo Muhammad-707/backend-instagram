@@ -21,6 +21,7 @@ import { LocationsModule } from './modules/locations/locations.module';
 import { VerificationModule } from './modules/verification/verification.module';
 import { FollowModule } from './modules/follow/follow.module';
 import { MusicModule } from './modules/music/music.module';
+import { SpotifyModule } from './modules/spotify/spotify.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { NotesModule } from './modules/notes/notes.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
@@ -54,6 +55,7 @@ import { UsersModule } from './modules/users/users.module';
     FollowModule,
     CloseFriendsModule,
     MusicModule,
+    SpotifyModule,
     PostsModule,
     StoriesModule,
     NotesModule,

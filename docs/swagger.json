@@ -2415,6 +2415,134 @@
         ]
       }
     },
+    "/api/spotify/search": {
+      "get": {
+        "description": "Название/исполнитель → название, артист, обложка альбома, превью. + isSaved.",
+        "operationId": "SpotifyController_search",
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "description": "Название трека / исполнитель",
+            "schema": {
+              "example": "shape of you",
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10,
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Object"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SpotifyTrackDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Поиск треков в Spotify",
+        "tags": [
+          "spotify"
+        ]
+      }
+    },
+    "/api/spotify/tracks/{spotifyId}/save": {
+      "post": {
+        "description": "Импортирует трек в вашу музыку (дедуп по spotifyId) и помечает сохранённым. Дальше он доступен как обычный трек: в /profile/me/saved-music, в постах и историях.",
+        "operationId": "SpotifyController_save",
+        "parameters": [
+          {
+            "name": "spotifyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MusicDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Сохранить трек из Spotify",
+        "tags": [
+          "spotify"
+        ]
+      },
+      "delete": {
+        "operationId": "SpotifyController_unsave",
+        "parameters": [
+          {
+            "name": "spotifyId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveMusicDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Убрать трек из сохранённых",
+        "tags": [
+          "spotify"
+        ]
+      }
+    },
     "/api/posts": {
       "post": {
         "description": "multipart/form-data. Поле «media» — файлы. caption ≤2200, хэштеги и упоминания парсятся из подписи автоматически. isReel=true → Reels.",
@@ -8385,6 +8513,57 @@
           "message"
         ]
       },
+      "SpotifyTrackDto": {
+        "type": "object",
+        "properties": {
+          "spotifyId": {
+            "type": "string",
+            "example": "7qiZfU4dY1lWllzX7mPBI3",
+            "description": "id трека в Spotify"
+          },
+          "title": {
+            "type": "string",
+            "example": "Shape of You"
+          },
+          "artist": {
+            "type": "string",
+            "example": "Ed Sheeran"
+          },
+          "albumCover": {
+            "type": "object",
+            "example": "https://i.scdn.co/image/ab67616d...",
+            "nullable": true
+          },
+          "previewUrl": {
+            "type": "object",
+            "example": "https://p.scdn.co/mp3-preview/...",
+            "nullable": true,
+            "description": "30-секундный отрывок (у части треков отсутствует → null)"
+          },
+          "spotifyUrl": {
+            "type": "string",
+            "example": "https://open.spotify.com/track/7qiZfU4dY1lWllzX7mPBI3"
+          },
+          "durationSec": {
+            "type": "number",
+            "example": 233,
+            "description": "Длительность в секундах"
+          },
+          "isSaved": {
+            "type": "boolean",
+            "example": false,
+            "description": "Уже сохранён мной (импортирован в мою музыку)"
+          }
+        },
+        "required": [
+          "spotifyId",
+          "title",
+          "artist",
+          "spotifyUrl",
+          "durationSec",
+          "isSaved"
+        ]
+      },
       "PostMediaDto": {
         "type": "object",
         "properties": {
@@ -9006,7 +9185,8 @@
         "properties": {
           "emoji": {
             "type": "string",
-            "example": "❤️"
+            "example": "❤️",
+            "description": "Любой эмодзи, включая составные (👨‍👩‍👧‍👦, 🏳️‍🌈, 👍🏽)"
           }
         },
         "required": [
@@ -10467,7 +10647,8 @@
         "properties": {
           "emoji": {
             "type": "string",
-            "example": "❤️"
+            "example": "❤️",
+            "description": "Любой эмодзи, включая составные (👨‍👩‍👧‍👦, 🏳️‍🌈, 👍🏽)"
           }
         },
         "required": [

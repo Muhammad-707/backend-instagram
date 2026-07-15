@@ -439,6 +439,9 @@ model Music {
   genre      String?
   isTrending Boolean  @default(false)
   usesCount  Int      @default(0)
+  // Если трек пришёл из Spotify — его id там (для дедупликации при импорте).
+  // null → локальный трек (загруженный mp3 из assets/).
+  spotifyId  String?  @unique
   createdAt  DateTime @default(now())
 
   posts   Post[]

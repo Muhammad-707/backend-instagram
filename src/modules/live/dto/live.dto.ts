@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { JoinStatus, LiveStatus } from '@prisma/client';
 import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEmoji } from '../../../common/validators/is-emoji.decorator';
 import { UserBriefDto } from '../../users/dto/users.dto';
 
 export class StartLiveDto {
@@ -25,10 +26,8 @@ export class LiveCommentInputDto {
 }
 
 export class LiveReactionInputDto {
-  @ApiProperty({ example: '❤️' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(16)
+  @ApiProperty({ example: '❤️', description: 'Любой эмодзи, включая составные (👨‍👩‍👧‍👦, 🏳️‍🌈, 👍🏽)' })
+  @IsEmoji()
   emoji!: string;
 }
 
