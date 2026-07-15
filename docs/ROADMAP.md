@@ -443,19 +443,36 @@
 > - Не проверялось живьём в сокет: само уведомление VERIFICATION_TRIAL_ENDING (окно «за 1 день»); логика есть, эмиттер тот же notifySystem, что уже проверен в Фазе 10.
 > - **13 endpoint'ов ровно по ТЗ** (locations 5 + verification 4 + admin 4).
 
-## Фаза 12.5 — LIVE (Прямые эфиры, 18 endpoints) — см. docs/TZ_LIVE_NOTES.md ЧАСТЬ B
-- [ ] LiveKit в docker-compose + LiveKitService (publisher / subscriber токены)
-- [ ] Prisma: Live, LiveViewer, LiveComment, LiveLike, LiveReaction, LiveJoinRequest, LiveGuest
-- [ ] start / end / feed / :id / user/:userId / join / leave / viewers
-- [ ] comment / like (много раз!) / reaction (всплывающие смайлы)
-- [ ] request-join → accept (гость = второй publisher, split-экран) / decline (уведомление отказа)
-- [ ] PUT /camera (видео выкл → аватар/картинка, ЗВУК ИДЁТ ВСЕГДА) · PUT /audio · kick · stats
-- [ ] Socket namespace /live: started, viewers, comment, like, reaction,
+## Фаза 12.5 — LIVE (Прямые эфиры, 18 endpoints)
+- [x] LiveKit в docker-compose + LiveKitService (publisher / subscriber токены)
+- [x] Prisma: Live, LiveViewer, LiveComment, LiveLike, LiveReaction, LiveJoinRequest, LiveGuest
+- [x] start / end / feed / :id / user/:userId / join / leave / viewers
+- [x] comment / like (много раз!) / reaction (всплывающие смайлы)
+- [x] request-join → accept (гость = второй publisher, split-экран) / decline (уведомление отказа)
+- [x] PUT /camera (видео выкл → аватар/картинка, ЗВУК ИДЁТ ВСЕГДА) · PUT /audio · kick · stats
+- [x] Socket namespace /live: started, viewers, comment, like, reaction,
        join-request, join-accepted, join-declined, guest-joined, camera, ended
-- [ ] Доступ: подписчик → в рейле историй; НЕ подписчик → только через ПОИСК (профиль → «В эфире»),
-       там может смотреть, комментировать, лайкать, подписаться
-- [ ] PrivacyGuard (закрытый аккаунт) + BlockGuard
-- ✅ Проверить с 3 клиентов: хост + зритель + гость (заявка → принял → split-экран)
+- [x] Доступ: подписчик → в рейле историй; НЕ подписчик → только через ПОИСК (профиль → «В эфире»)
+- [x] Privacy (закрытый хост → только подписчики) + Block (заблокированный → 403)
+- ✅ Проверено (4 сокет-клиента: host+follower+viewer+guest): заявка → принял → гость publisher (split-экран)
+
+> Заметки Фазы 12.5:
+> - **`docs/TZ_LIVE_NOTES.md` отсутствует** в репо — реализовано по spec из аргументов /start (полностью покрывает 18 endpoint'ов).
+> - **LiveKitService** (livekit-server-sdk 2.13.1): `AccessToken.toJwt()` — async в v2. publisher-грант (canPublish=true) хосту/принятому гостю, subscriber (false) зрителям. RoomServiceClient для closeRoom/removeParticipant (best-effort — падение LiveKit не роняет endpoint). URL ws→http для RoomServiceClient.
+> - **Namespace `/live`** (`LiveGateway` + `LiveRealtimeService`-мост, отдельно от `/rt`): клиент сидит в `liveuser:<id>` (личные события), на просмотр подписывается через `live:subscribe` → комната `live:<liveId>`.
+> - **Уведомления** (LIVE_STARTED/JOIN_REQUEST/ACCEPTED/DECLINED) идут через существующий NotificationsService (эмит NOTIFY_EVENT), в сокет /rt; live-room-события — через /live.
+> - **Токен гостю приватно**: accept шлёт publisher-токен только в `liveuser:<guestId>` (не в комнату) — split-экран.
+> - **Камера/звук раздельно**: `PUT /camera` меняет только isCameraOn (видео); звук (isAudioOn) не трогается — «ЗВУК ИДЁТ ВСЕГДА».
+> - **Живая проверка (все PASS):**
+>   - start→201, host token canPublish=**true**; follower получил `live:started` + эфир в `/live/feed`.
+>   - viewer join→subscriber token canPublish=**false**, viewersCount=1.
+>   - comment→1, like×3→likesCount=3 (3 события), reaction→1 — всё в комнату.
+>   - request-join→хост получил `live:join-request`; accept→гость получил `live:join-accepted` с токеном canPublish=**true** + `live:guest-joined`.
+>   - decline→гость получил `live:join-declined`.
+>   - camera off→isCameraOn=false (сокет), audio→isAudioOn=true (звук идёт).
+>   - viewers→список; kick→зритель получил `live:kicked`.
+>   - **Block: заблокированный join→403**; stats (likes/comments/reactions/peak/duration); end→`live:ended`, статус ENDED.
+> - Не проверено «вживую» (нужен браузер+WebRTC): реальная передача медиа/split-экран картинкой — но токены с корректными грантами и все события выданы.
 
 ## Фаза 13 — Финал: тесты, производительность, деплой
 - [ ] e2e (Jest + Supertest): auth-флоу, лента, лайк, история, чат, приватный аккаунт, блок

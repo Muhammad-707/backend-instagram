@@ -267,6 +267,10 @@ export class NotificationsService {
       PROFILE_VIEW: 'посмотрел(и) ваш профиль',
       NEW_POST_FROM_FOLLOWING: 'опубликовал(и) новое',
       VERIFICATION_TRIAL_ENDING: 'Пробный период верификации заканчивается',
+      LIVE_STARTED: 'начал(и) прямой эфир',
+      LIVE_JOIN_REQUEST: 'хочет(ят) присоединиться к вашему эфиру',
+      LIVE_JOIN_ACCEPTED: 'принял(и) вас в эфир',
+      LIVE_JOIN_DECLINED: 'отклонил(и) вашу заявку в эфир',
     };
     const tail = verb[type] ?? 'уведомление';
     return type === 'VERIFICATION_TRIAL_ENDING' ? tail : `${who} ${tail}`;

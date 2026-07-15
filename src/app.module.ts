@@ -16,6 +16,7 @@ import { StorageModule } from './storage/storage.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CloseFriendsModule } from './modules/close-friends/close-friends.module';
+import { LiveModule } from './modules/live/live.module';
 import { LocationsModule } from './modules/locations/locations.module';
 import { VerificationModule } from './modules/verification/verification.module';
 import { FollowModule } from './modules/follow/follow.module';
@@ -63,6 +64,7 @@ import { UsersModule } from './modules/users/users.module';
     LocationsModule,
     VerificationModule,
     AdminModule,
+    LiveModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
