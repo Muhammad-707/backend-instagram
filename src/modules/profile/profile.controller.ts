@@ -30,6 +30,7 @@ import {
   ActivityItemDto,
   ActivityQueryDto,
   AvatarDto,
+  CollectionDto,
   IsFollowingDto,
   MusicBriefDto,
   OtherProfileDto,
@@ -55,6 +56,19 @@ export class ProfileController {
   @ApiOkResponse({ type: ProfileDto })
   async me(@CurrentUser('id') userId: string): Promise<ProfileDto> {
     return this.profileService.me(userId);
+  }
+
+  @Get('me/collections')
+  @ApiOperation({
+    summary: 'Мои коллекции сохранённого',
+    description:
+      'Имя коллекции — то же значение, что принимает POST /posts/{id}/favorite в поле ' +
+      '`collection`, поэтому список можно показывать выбором вместо ввода руками. ' +
+      'Посты вне коллекций сюда не входят — они в /profile/favorites.',
+  })
+  @ApiOkResponse({ type: [CollectionDto] })
+  async collections(@CurrentUser('id') userId: string): Promise<CollectionDto[]> {
+    return this.profileService.collections(userId);
   }
 
   @Get('favorites')

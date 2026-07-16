@@ -8,15 +8,18 @@ import {
   ParseIntPipe,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import {
   AudioDto,
   CameraDto,
@@ -27,6 +30,7 @@ import {
   LiveLikeResultDto,
   LiveOkDto,
   LiveReactionInputDto,
+  LiveRequestsQueryDto,
   LiveStatsDto,
   LiveTokenDto,
   LiveViewerDto,
@@ -125,6 +129,39 @@ export class LiveController {
     @Param('id') id: string,
   ): Promise<LiveViewerDto[]> {
     return this.live.viewers(userId, id);
+  }
+
+  @Get(':id/comments')
+  @ApiOperation({
+    summary: 'Комментарии эфира (новые → старые)',
+    description:
+      'Курсор — id последнего элемента предыдущей страницы. Доступ тот же, что у ' +
+      '/live/{id}/join: блокировка и приватность действуют одинаково.',
+  })
+  @ApiOkResponse({ type: LiveCommentDto, isArray: true })
+  async comments(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Query() dto: CursorDto,
+  ): Promise<CursorPage<LiveCommentDto>> {
+    return this.live.comments(userId, id, dto);
+  }
+
+  @Get(':id/requests')
+  @ApiOperation({
+    summary: 'Заявки на участие в эфире (только хост)',
+    description:
+      'id из этого списка принимает POST /live/requests/{id}/accept | /decline. ' +
+      'Без status отдаются все заявки.',
+  })
+  @ApiOkResponse({ type: JoinRequestDto, isArray: true })
+  @ApiForbiddenResponse({ description: 'Только хост эфира может это делать' })
+  async requests(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Query() dto: LiveRequestsQueryDto,
+  ): Promise<JoinRequestDto[]> {
+    return this.live.requests(userId, id, dto.status);
   }
 
   @Post(':id/comment')

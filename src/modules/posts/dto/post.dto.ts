@@ -107,6 +107,12 @@ export class ExploreQueryDto extends CursorDto {
   @IsOptional()
   @IsString()
   hashtag?: string;
+
+  @ApiPropertyOptional({ example: 12, description: 'Фильтр по локации (id)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  locationId?: number;
 }
 
 // ─────────────── ответы ───────────────

@@ -15,4 +15,6 @@ export interface NotifyPayload {
   noteId?: number;
   chatId?: number;
   liveId?: string;
+  /** id заявки в эфир — нужен хосту, чтобы принять/отклонить прямо из уведомления. */
+  requestId?: number;
 }

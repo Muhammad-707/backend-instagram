@@ -70,6 +70,31 @@ export class UsersService {
     return { ...page, items: page.items.map((r) => this.toBrief(r)) };
   }
 
+  /**
+   * Точное совпадение по userName, регистронезависимо.
+   *
+   * Зачем отдельно от search(): `@упоминание` ведёт на /u/{userName}, а search()
+   * ищет подстрокой И по fullName — «er» вернёт и eraj, и amERica, и выбирать
+   * точное совпадение приходилось бы фронту. Здесь ровно один пользователь или 404.
+   */
+  async findByUserName(viewerId: string, userName: string): Promise<UserBriefDto> {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        userName: { equals: userName, mode: Prisma.QueryMode.insensitive },
+        isDeleted: false,
+      },
+      select: USER_BRIEF,
+    });
+    if (!user) throw new NotFoundException('Пользователь не найден');
+
+    // Блокировка прячет профиль так же, как в search() — иначе by-username стал бы
+    // обходным путём вокруг блока.
+    const hidden = await this.access.blockedIds(viewerId);
+    if (hidden.includes(user.id)) throw new NotFoundException('Пользователь не найден');
+
+    return this.toBrief(user);
+  }
+
   // ─────────────── история поиска: текстовая ───────────────
 
   async addSearchText(userId: string, text: string): Promise<SearchHistoryItemDto> {

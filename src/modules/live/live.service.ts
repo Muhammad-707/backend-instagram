@@ -8,6 +8,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { FollowStatus, JoinStatus, LiveStatus, NotifType, Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { AccessService } from '../../common/access/access.service';
+import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
 import { UserBriefDto } from '../users/dto/users.dto';
@@ -221,6 +222,64 @@ export class LiveService {
     return out;
   }
 
+  /**
+   * Лента комментариев эфира: новые → старые, курсор = id последнего элемента.
+   *
+   * До этого API умел только писать (POST /live/{id}/comment): зритель видел
+   * лишь свои комментарии и те, что пришли в сокет ПОСЛЕ подключения. Зайти в
+   * идущий эфир и увидеть, о чём говорят, было нельзя.
+   *
+   * Доступ — тот же assertCanView, что у join(): приватность и блок работают
+   * одинаково, иначе лента комментариев стала бы обходом закрытого эфира.
+   */
+  async comments(userId: string, liveId: string, dto: CursorDto): Promise<CursorPage<LiveCommentDto>> {
+    const live = await this.getRaw(liveId);
+    await this.assertCanView(userId, live);
+
+    const rows = await this.prisma.liveComment.findMany({
+      where: { liveId },
+      select: { id: true, text: true, createdAt: true, user: { select: USER_BRIEF } },
+      orderBy: { id: 'desc' },
+      take: dto.limit + 1,
+      ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
+    });
+
+    const page = buildCursorPage(rows, dto.limit, (r) => r.id);
+    return {
+      ...page,
+      items: page.items.map((r) => ({
+        id: r.id,
+        user: this.toBrief(r.user),
+        text: r.text,
+        createdAt: r.createdAt,
+      })),
+    };
+  }
+
+  /**
+   * Заявки в эфир — только хосту.
+   *
+   * Без этого списка 2 из 18 live-endpoint'ов были недостижимы: id заявки
+   * возвращался тому, КТО попросился, а хосту (кто принимает) — никуда.
+   */
+  async requests(hostId: string, liveId: string, status?: JoinStatus): Promise<JoinRequestDto[]> {
+    const live = await this.getRaw(liveId);
+    this.assertHost(live, hostId); // не хост → 403
+
+    const rows = await this.prisma.liveJoinRequest.findMany({
+      where: { liveId, ...(status ? { status } : {}) },
+      select: { id: true, status: true, createdAt: true, user: { select: USER_BRIEF } },
+      orderBy: { id: 'desc' },
+    });
+
+    return rows.map((r) => ({
+      id: r.id,
+      user: this.toBrief(r.user),
+      status: r.status,
+      createdAt: r.createdAt,
+    }));
+  }
+
   /** Лайк можно слать МНОГО РАЗ — каждый идёт как всплывающее сердечко. */
   async like(userId: string, liveId: string): Promise<LiveLikeResultDto> {
     const live = await this.getRaw(liveId);
@@ -265,7 +324,7 @@ export class LiveService {
     };
     // Хосту — и в сокет (кнопка «принять/отклонить»), и в уведомления.
     this.rt.emitToUser(live.hostId, 'live:join-request', { liveId, request: out });
-    this.notify(live.hostId, userId, NotifType.LIVE_JOIN_REQUEST, liveId);
+    this.notify(live.hostId, userId, NotifType.LIVE_JOIN_REQUEST, liveId, row.id);
     return out;
   }
 
@@ -310,7 +369,7 @@ export class LiveService {
       liveId: req.live.id,
       userId: req.userId,
     });
-    this.notify(req.userId, hostId, NotifType.LIVE_JOIN_ACCEPTED, req.live.id);
+    this.notify(req.userId, hostId, NotifType.LIVE_JOIN_ACCEPTED, req.live.id, req.id);
     return { ok: true };
   }
 
@@ -327,7 +386,7 @@ export class LiveService {
       data: { status: JoinStatus.DECLINED, decidedAt: new Date() },
     });
     this.rt.emitToUser(req.userId, 'live:join-declined', { liveId: req.live.id });
-    this.notify(req.userId, hostId, NotifType.LIVE_JOIN_DECLINED, req.live.id);
+    this.notify(req.userId, hostId, NotifType.LIVE_JOIN_DECLINED, req.live.id, req.id);
     return { ok: true };
   }
 
@@ -446,8 +505,20 @@ export class LiveService {
     });
   }
 
-  private notify(userId: string, actorId: string, type: NotifType, liveId: string): void {
-    this.events.emit(NOTIFY_EVENT, { userId, actorId, type, liveId } satisfies NotifyPayload);
+  private notify(
+    userId: string,
+    actorId: string,
+    type: NotifType,
+    liveId: string,
+    requestId?: number,
+  ): void {
+    this.events.emit(NOTIFY_EVENT, {
+      userId,
+      actorId,
+      type,
+      liveId,
+      requestId,
+    } satisfies NotifyPayload);
   }
 
   private toDto(r: LiveRow): LiveDto {

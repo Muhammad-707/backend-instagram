@@ -414,7 +414,7 @@ export class StoriesService {
     const [views, likes, reactions] = await Promise.all([
       this.prisma.storyView.findMany({
         where: { storyId: id },
-        select: { userId: true, viewedAt: true, user: { select: USER_BRIEF } },
+        select: { id: true, userId: true, viewedAt: true, user: { select: USER_BRIEF } },
         orderBy: { viewedAt: 'desc' },
       }),
       this.prisma.storyLike.findMany({ where: { storyId: id }, select: { userId: true } }),
@@ -433,6 +433,7 @@ export class StoriesService {
     }
 
     return views.map((v) => ({
+      id: v.id,
       user: this.toBrief(v.user),
       viewed: true,
       liked: likedSet.has(v.userId),

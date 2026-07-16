@@ -930,6 +930,9 @@ model Notification {
   chatId    Int?
   noteId    Int?
   liveId    String?
+  // id заявки в эфир (LIVE_JOIN_*) — без него хост не может принять/отклонить
+  // заявку из уведомления: POST /live/requests/{id}/accept принимает именно его.
+  requestId Int?
   isRead    Boolean   @default(false)
   createdAt DateTime  @default(now())
 

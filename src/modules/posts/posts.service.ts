@@ -219,6 +219,7 @@ export class PostsService {
         ...(dto.hashtag
           ? { hashtags: { some: { hashtag: { name: dto.hashtag.toLowerCase() } } } }
           : {}),
+        ...(dto.locationId ? { locationId: dto.locationId } : {}),
       },
       select: POST_SELECT,
       orderBy: { id: 'desc' },

@@ -80,6 +80,11 @@ export class UpdatePrivacyDto {
 }
 
 export class ActivityQueryDto extends CursorDto {
+  /**
+   * ВНИМАНИЕ: здесь `cursor` — ISO-дата (`at` последнего элемента), а не id,
+   * в отличие от остальных списков проекта. Причина — в ActivityItemDto.id.
+   */
+
   @ApiPropertyOptional({ example: '2026-07-01', description: 'Фильтр: не раньше этой даты' })
   @IsOptional()
   @IsDateString()
@@ -217,6 +222,14 @@ export class MusicBriefDto {
 
 export class ActivityItemDto {
   @ApiProperty({
+    example: 'LIKE:12',
+    description:
+      'Составной id «ТИП:id строки». Список слит из четырёх таблиц, где id повторяются, ' +
+      'поэтому простого id тут не существует. Для «показать ещё» используйте `at` (см. cursor).',
+  })
+  id!: string;
+
+  @ApiProperty({
     enum: ['LIKE', 'COMMENT', 'POST_VIEW', 'SEARCH'],
     example: 'LIKE',
   })
@@ -235,4 +248,18 @@ export class ActivityItemDto {
 export class AvatarDto {
   @ApiPropertyOptional({ nullable: true, description: 'null после удаления' })
   avatarUrl?: string | null;
+}
+
+export class CollectionDto {
+  @ApiProperty({ example: 'Путешествия', description: 'Имя коллекции — оно же ключ при сохранении' })
+  name!: string;
+
+  @ApiProperty({ example: 7 })
+  postsCount!: number;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Превью последнего сохранённого поста (или явная обложка коллекции)',
+  })
+  coverUrl?: string | null;
 }

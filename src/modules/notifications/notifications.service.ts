@@ -28,6 +28,8 @@ const NOTIF_SELECT = {
   commentId: true,
   storyId: true,
   noteId: true,
+  liveId: true,
+  requestId: true,
   isRead: true,
   createdAt: true,
   actorId: true,
@@ -81,6 +83,7 @@ export class NotificationsService {
         noteId: p.noteId ?? null,
         chatId: p.chatId ?? null,
         liveId: p.liveId ?? null,
+        requestId: p.requestId ?? null,
       },
       select: NOTIF_SELECT,
     });
@@ -145,8 +148,10 @@ export class NotificationsService {
       nextCursor = String(minId);
     }
 
+    const thumbs = await this.loadThumbs(pageGroups.flat());
+
     return {
-      items: pageGroups.map((g) => this.toDto(g)),
+      items: pageGroups.map((g) => this.toDto(g, thumbs)),
       nextCursor,
       hasMore,
     };
@@ -199,7 +204,11 @@ export class NotificationsService {
     const page = buildCursorPage(rows, dto.limit, (r) => r.id);
     return {
       ...page,
-      items: page.items.map((r) => ({ viewer: this.toBrief(r.viewer), viewedAt: r.viewedAt })),
+      items: page.items.map((r) => ({
+        id: r.id,
+        viewer: this.toBrief(r.viewer),
+        viewedAt: r.viewedAt,
+      })),
     };
   }
 
@@ -223,7 +232,37 @@ export class NotificationsService {
     return {};
   }
 
-  private toDto(group: NotifRow[]): NotificationDto {
+  /**
+   * Превью постов для строк уведомлений — ОДНИМ запросом на всю страницу.
+   *
+   * Notification.postId — свободный Int без FK на Post, поэтому связи в Prisma нет
+   * и `include: { post: ... }` тут невозможен. Добавлять FK ради превью не стали:
+   * на старых строках могут быть id уже удалённых постов, и миграция бы упала.
+   * Отсюда же следствие: у удалённого поста превью просто не будет (null), а не 500.
+   */
+  private async loadThumbs(rows: NotifRow[]): Promise<Map<number, string>> {
+    const ids = [...new Set(rows.map((r) => r.postId).filter((id): id is number => id !== null))];
+    if (ids.length === 0) return new Map();
+
+    const posts = await this.prisma.post.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        media: { select: { url: true, thumbUrl: true }, orderBy: { order: 'asc' }, take: 1 },
+      },
+    });
+
+    const map = new Map<number, string>();
+    for (const p of posts) {
+      const first = p.media[0];
+      // У видео обложка — постер, у фото — само изображение.
+      const url = first?.thumbUrl ?? first?.url;
+      if (url) map.set(p.id, url);
+    }
+    return map;
+  }
+
+  private toDto(group: NotifRow[], thumbs?: Map<number, string>): NotificationDto {
     const latest = group[0];
     // Уникальные акторы (одного и того же человека не считаем дважды).
     const actors = new Set(group.map((r) => r.actorId));
@@ -239,6 +278,9 @@ export class NotificationsService {
       commentId: latest.commentId,
       storyId: latest.storyId,
       noteId: latest.noteId,
+      liveId: latest.liveId,
+      requestId: latest.requestId,
+      postThumbUrl: (latest.postId ? thumbs?.get(latest.postId) : null) ?? null,
       isRead: group.every((r) => r.isRead),
       groupIds: group.map((r) => r.id),
       createdAt: latest.createdAt,

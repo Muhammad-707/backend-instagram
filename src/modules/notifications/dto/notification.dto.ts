@@ -36,6 +36,27 @@ export class NotificationDto {
   @ApiPropertyOptional({ nullable: true })
   noteId?: number | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'id эфира для LIVE_* — без него по уведомлению некуда перейти',
+  })
+  liveId?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 42,
+    description:
+      'id заявки в эфир (LIVE_JOIN_REQUEST). Именно его принимает ' +
+      'POST /live/requests/{id}/accept | /decline',
+  })
+  requestId?: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Миниатюра поста (первое медиа) — картинка справа в строке уведомления',
+  })
+  postThumbUrl?: string | null;
+
   @ApiProperty({ example: false })
   isRead!: boolean;
 
@@ -55,6 +76,9 @@ export class UnreadCountDto {
 }
 
 export class ProfileViewDto {
+  @ApiProperty({ description: 'id строки — курсор для следующей страницы' })
+  id!: string;
+
   @ApiProperty({ type: UserBriefDto })
   viewer!: UserBriefDto;
 

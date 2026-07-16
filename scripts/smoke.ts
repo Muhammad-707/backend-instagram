@@ -23,6 +23,13 @@ interface Result {
 
 const results: Result[] = [];
 const hit = new Set<string>();
+const checks: { name: string; ok: boolean; note: string }[] = [];
+
+/** Проверка не «ответил 200», а «ответил то, что нужно» — критерии приёмки задач. */
+function check(name: string, ok: boolean, note = ''): void {
+  checks.push({ name, ok, note });
+  process.stdout.write(ok ? '✓' : `\n  ✗ ПРОВЕРКА: ${name} — ${note}\n`);
+}
 
 interface CallOpts {
   token?: string;
@@ -178,6 +185,18 @@ async function main(): Promise<void> {
   // ── users ─────────────────────────────────────────────────────────────
   await call('GET', '/users?q=smoke', { token: t1, route: '/users' });
   await call('GET', '/users/suggestions', { token: t1 });
+
+  // Вазифаи 9: ҷустуҷӯ бо userName-и АНИҚ, регистр аҳамият надорад.
+  const byName = await call('GET', `/users/by-username/${u2.userName.toUpperCase()}`, {
+    token: t1,
+    route: '/users/by-username/{userName}',
+  });
+  check('by-username регистрро фарқ намекунад', byName.data?.id === id2, `гирифт: ${byName.data?.id}`);
+  await call('GET', '/users/by-username/nest_chunin_kas_1234', {
+    token: t1,
+    route: '/users/by-username/{userName}',
+    expect: [404],
+  });
   const sh = await call('POST', '/users/search-history', { token: t1, body: { text: 'smoke' } });
   await call('GET', '/users/search-history', { token: t1 });
   // Ҳам ин ва ҳам роути зерин бо id-и САТРИ таърих кор мекунанд, на бо userId.
@@ -270,16 +289,38 @@ async function main(): Promise<void> {
   await call('GET', '/posts/feed', { token: t1 });
   await call('GET', '/posts/reels', { token: t1 });
   await call('GET', '/posts/my', { token: t1 });
+
+  // Вазифаи 7 (критерия): пости u1 бо ин локация ба u2 намоён аст.
+  const locPosts = await call('GET', `/locations/${locId}/posts`, {
+    token: t2,
+    route: '/locations/{id}/posts',
+  });
+  const lpItems: any[] = locPosts.data?.items ?? locPosts.data ?? [];
+  check(
+    'локация: ленти он пости сохташударо дорад',
+    lpItems.some((p: any) => p.id === postId),
+    `гирифт ${lpItems.length} пост, кофтам id=${postId}`,
+  );
   await call('GET', `/posts/${postId}`, { token: t1, route: '/posts/{id}' });
   await call('PUT', `/posts/${postId}`, { token: t1, body: { caption: 'edited' }, route: '/posts/{id}' });
   await call('POST', `/posts/${postId}/view`, { token: t2, route: '/posts/{id}/view' });
   await call('POST', `/posts/${postId}/like`, { token: t2, route: '/posts/{id}/like' });
   await call('GET', `/posts/${postId}/likes`, { token: t1, route: '/posts/{id}/likes' });
-  await call('POST', `/posts/${postId}/favorite`, { token: t1, body: { collection: 'Smoke' }, route: '/posts/{id}/favorite' });
+  await call('POST', `/posts/${postId}/favorite?collection=Smoke`, { token: t1, route: '/posts/{id}/favorite' });
   await call('POST', `/posts/${postId}/share`, { token: t1, body: { toUserId: id2 }, route: '/posts/{id}/share' });
   await call('POST', `/posts/${postId}/report`, { token: t2, body: { reason: 'SPAM' }, route: '/posts/{id}/report' });
   await call('POST', `/posts/${postId}/archive`, { token: t1, route: '/posts/{id}/archive' });
   await call('DELETE', `/posts/${postId}/archive`, { token: t1, route: '/posts/{id}/archive' });
+
+  // Вазифаи 11 (критерия): коллексияи «Smoke» бояд бо превю баргардад.
+  const cols = await call('GET', '/profile/me/collections', { token: t1 });
+  const colItems: any[] = cols.data ?? [];
+  const smokeCol = colItems.find((c) => c.name === 'Smoke');
+  check(
+    'коллексияҳо: «Smoke» бо postsCount ва coverUrl',
+    !!smokeCol && smokeCol.postsCount >= 1 && !!smokeCol.coverUrl,
+    `гирифт: ${JSON.stringify(smokeCol)}`,
+  );
 
   const cm = await call('POST', `/posts/${postId}/comments`, {
     token: t2,
@@ -389,6 +430,14 @@ async function main(): Promise<void> {
   // ── notifications ─────────────────────────────────────────────────────
   const nots = await call('GET', '/notifications', { token: t1 });
   const notId: number | undefined = nots.data?.items?.[0]?.id ?? nots.data?.[0]?.id;
+  const nItems: any[] = nots.data?.items ?? nots.data ?? [];
+  const likeNot = nItems.find((n) => n.type === 'LIKE_POST');
+  check(
+    'уведомление: LIKE_POST postThumbUrl дорад',
+    !!likeNot && typeof likeNot.postThumbUrl === 'string' && likeNot.postThumbUrl.length > 0,
+    `гирифт: ${likeNot?.postThumbUrl}`,
+  );
+
   await call('GET', '/notifications/unread-count', { token: t1 });
   await call('GET', '/notifications/profile-views', { token: t1 });
   if (notId) await call('POST', `/notifications/${notId}/read`, { token: t1, route: '/notifications/{id}/read' });
@@ -415,10 +464,51 @@ async function main(): Promise<void> {
   await call('POST', `/live/${liveId}/join`, { token: t2, route: '/live/{id}/join' });
   await call('GET', `/live/${liveId}/viewers`, { token: t1, route: '/live/{id}/viewers' });
   await call('POST', `/live/${liveId}/comment`, { token: t2, body: { text: 'hi' }, route: '/live/{id}/comment' });
+  // Вазифаи 5 (критерия): u2 коммент менависад → u1 бояд ОНРО бинад.
+  const liveComments = await call('GET', `/live/${liveId}/comments`, {
+    token: t1,
+    route: '/live/{id}/comments',
+  });
+  const lcItems: any[] = liveComments.data?.items ?? liveComments.data ?? [];
+  check(
+    'эфир: коммети u2 ба u1 намоён аст',
+    lcItems.some((c) => c.text === 'hi'),
+    `гирифт ${lcItems.length} коммент`,
+  );
+
   await call('POST', `/live/${liveId}/like`, { token: t2, route: '/live/{id}/like' });
   await call('POST', `/live/${liveId}/reaction`, { token: t2, body: { emoji: '🔥' }, route: '/live/{id}/reaction' });
   const jr = await call('POST', `/live/${liveId}/request-join`, { token: t2, route: '/live/{id}/request-join' });
   const reqId: number | undefined = jr.data?.id;
+
+  // Вазифаи 6 (критерия): ХОСТ бояд дархостро дар рӯйхати худ бинад.
+  const hostReqs = await call('GET', `/live/${liveId}/requests?status=PENDING`, {
+    token: t1,
+    route: '/live/{id}/requests',
+  });
+  const hrItems: any[] = hostReqs.data ?? [];
+  check(
+    'эфир: хост дархости u2-ро мебинад',
+    hrItems.some((r) => r.id === reqId),
+    `гирифт ${hrItems.length} дархост, кофтам id=${reqId}`,
+  );
+  // Ғайри хост → 403, вагарна рӯйхат ба ҳама кушода мешуд.
+  await call('GET', `/live/${liveId}/requests`, {
+    token: t2,
+    route: '/live/{id}/requests',
+    expect: [403],
+  });
+
+  // Вазифаи 6.2: уведомление бояд liveId ва requestId дошта бошад.
+  const hostNots = await call('GET', '/notifications', { token: t1, route: '/notifications' });
+  const hnItems: any[] = hostNots.data?.items ?? hostNots.data ?? [];
+  const joinNot = hnItems.find((n) => n.type === 'LIVE_JOIN_REQUEST');
+  check(
+    'уведомление: LIVE_JOIN_REQUEST liveId+requestId дорад',
+    !!joinNot && joinNot.liveId === liveId && joinNot.requestId === reqId,
+    `гирифт: liveId=${joinNot?.liveId} requestId=${joinNot?.requestId}`,
+  );
+
   if (reqId) {
     await call('POST', `/live/requests/${reqId}/decline`, { token: t1, route: '/live/requests/{id}/decline' });
   }
@@ -472,6 +562,12 @@ function report(): void {
   console.log(`Зада шуд:  ${hit.size}/${all.length} роут · ${results.length} дархост`);
   console.log(`Гузашт:    ${results.length - failed.length}`);
   console.log(`Афтод:     ${failed.length}`);
+  const badChecks = checks.filter((c) => !c.ok);
+  console.log(`Критерия:  ${checks.length - badChecks.length}/${checks.length} санҷиши маъно`);
+  if (badChecks.length) {
+    console.log('\n──── КРИТЕРИЯҲОИ НОГУЗАШТА ────');
+    for (const c of badChecks) console.log(`  ✗ ${c.name} — ${c.note}`);
+  }
 
   if (failed.length) {
     console.log('\n──── АФТОДАҲО ────');

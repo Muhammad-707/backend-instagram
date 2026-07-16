@@ -16,7 +16,9 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
-import { CursorPage } from '../../common/pagination/cursor.dto';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
+import { PostDto } from '../posts/dto/post.dto';
 import {
   CreateLocationDto,
   DeletedDto,
@@ -44,6 +46,23 @@ export class LocationsController {
   @ApiOkResponse({ type: LocationDto })
   async get(@Param('id', ParseIntPipe) id: number): Promise<LocationDto> {
     return this.locations.get(id);
+  }
+
+  @Get(':id/posts')
+  @ApiOperation({
+    summary: 'Лента постов, снятых в этой локации',
+    description:
+      'Правила выдачи те же, что у /search/hashtag/{name} (общий PostsService.explore): ' +
+      'посты закрытых аккаунтов видны только подписчикам, заблокированные исключены, ' +
+      'свои посты в выдачу не попадают. Курсор — id последнего элемента.',
+  })
+  @ApiOkResponse({ type: PostDto, isArray: true })
+  async posts(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Query() dto: CursorDto,
+  ): Promise<CursorPage<PostDto>> {
+    return this.locations.posts(userId, id, dto);
   }
 
   @Post()

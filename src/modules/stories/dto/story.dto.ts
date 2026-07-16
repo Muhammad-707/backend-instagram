@@ -164,6 +164,9 @@ export class StoryLikeToggleDto {
 }
 
 export class StoryViewerDto {
+  @ApiProperty({ description: 'id записи просмотра (StoryView) — ключ строки в списке' })
+  id!: string;
+
   @ApiProperty({ type: UserBriefDto })
   user!: UserBriefDto;
 

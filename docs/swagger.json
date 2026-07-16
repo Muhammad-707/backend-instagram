@@ -556,6 +556,46 @@
         ]
       }
     },
+    "/api/users/by-username/{userName}": {
+      "get": {
+        "description": "Для @упоминаний и ссылок /u/{userName}: search() ищет подстрокой и по fullName, поэтому точное совпадение им не получить. Заблокированные — 404, как и в поиске.",
+        "operationId": "UsersController_findByUserName",
+        "parameters": [
+          {
+            "name": "userName",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBriefDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Пользователь не найден"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Профиль по точному userName (регистронезависимо)",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/api/users/suggestions": {
       "get": {
         "description": "Кого читают мои подписки. followedBy → «Подписаны: m.ibrohim».",
@@ -937,6 +977,37 @@
           }
         ],
         "summary": "Мой профиль",
+        "tags": [
+          "profile"
+        ]
+      }
+    },
+    "/api/profile/me/collections": {
+      "get": {
+        "description": "Имя коллекции — то же значение, что принимает POST /posts/{id}/favorite в поле `collection`, поэтому список можно показывать выбором вместо ввода руками. Посты вне коллекций сюда не входят — они в /profile/favorites.",
+        "operationId": "ProfileController_collections",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CollectionDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Мои коллекции сохранённого",
         "tags": [
           "profile"
         ]
@@ -2648,6 +2719,16 @@
             "schema": {
               "example": "travel",
               "type": "string"
+            }
+          },
+          {
+            "name": "locationId",
+            "required": false,
+            "in": "query",
+            "description": "Фильтр по локации (id)",
+            "schema": {
+              "example": 12,
+              "type": "number"
             }
           }
         ],
@@ -6049,6 +6130,70 @@
         ]
       }
     },
+    "/api/locations/{id}/posts": {
+      "get": {
+        "description": "Правила выдачи те же, что у /search/hashtag/{name} (общий PostsService.explore): посты закрытых аккаунтов видны только подписчикам, заблокированные исключены, свои посты в выдачу не попадают. Курсор — id последнего элемента.",
+        "operationId": "LocationsController_posts",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "description": "Курсор последнего элемента предыдущей страницы",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20,
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Object"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PostDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Лента постов, снятых в этой локации",
+        "tags": [
+          "locations"
+        ]
+      }
+    },
     "/api/verification/status": {
       "get": {
         "operationId": "VerificationController_status",
@@ -6731,6 +6876,127 @@
         ]
       }
     },
+    "/api/live/{id}/comments": {
+      "get": {
+        "description": "Курсор — id последнего элемента предыдущей страницы. Доступ тот же, что у /live/{id}/join: блокировка и приватность действуют одинаково.",
+        "operationId": "LiveController_comments",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "description": "Курсор последнего элемента предыдущей страницы",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20,
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Object"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LiveCommentDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Комментарии эфира (новые → старые)",
+        "tags": [
+          "live"
+        ]
+      }
+    },
+    "/api/live/{id}/requests": {
+      "get": {
+        "description": "id из этого списка принимает POST /live/requests/{id}/accept | /decline. Без status отдаются все заявки.",
+        "operationId": "LiveController_requests",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "description": "Фильтр по статусу. Обычно PENDING — те, что ждут решения хоста.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "ACCEPTED",
+                "DECLINED"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JoinRequestDto"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Только хост эфира может это делать"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Заявки на участие в эфире (только хост)",
+        "tags": [
+          "live"
+        ]
+      }
+    },
     "/api/live/{id}/comment": {
       "post": {
         "operationId": "LiveController_comment",
@@ -7129,6 +7395,17 @@
           "timestamp": {
             "type": "string",
             "example": "2026-07-14T10:00:00.000Z"
+          },
+          "reasons": {
+            "type": "object",
+            "description": "Сабаби хатогии пайваст барои ҳар сервиси афтода. Танҳо вақте ҳаст, ки чизе «down» бошад. Парол, хост ва IP пеш аз ирсол пок карда мешаванд.",
+            "example": {
+              "database": "Can't reach database server at `***`",
+              "redis": "connect ECONNREFUSED ***"
+            },
+            "additionalProperties": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -7919,6 +8196,29 @@
           "followingCount"
         ]
       },
+      "CollectionDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Путешествия",
+            "description": "Имя коллекции — оно же ключ при сохранении"
+          },
+          "postsCount": {
+            "type": "number",
+            "example": 7
+          },
+          "coverUrl": {
+            "type": "object",
+            "nullable": true,
+            "description": "Превью последнего сохранённого поста (или явная обложка коллекции)"
+          }
+        },
+        "required": [
+          "name",
+          "postsCount"
+        ]
+      },
       "PostBriefDto": {
         "type": "object",
         "properties": {
@@ -7994,6 +8294,11 @@
       "ActivityItemDto": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string",
+            "example": "LIKE:12",
+            "description": "Составной id «ТИП:id строки». Список слит из четырёх таблиц, где id повторяются, поэтому простого id тут не существует. Для «показать ещё» используйте `at` (см. cursor)."
+          },
           "type": {
             "type": "string",
             "enum": [
@@ -8020,6 +8325,7 @@
           }
         },
         "required": [
+          "id",
           "type",
           "at"
         ]
@@ -9233,6 +9539,10 @@
       "StoryViewerDto": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string",
+            "description": "id записи просмотра (StoryView) — ключ строки в списке"
+          },
           "user": {
             "$ref": "#/components/schemas/UserBriefDto"
           },
@@ -9257,6 +9567,7 @@
           }
         },
         "required": [
+          "id",
           "user",
           "viewed",
           "liked",
@@ -10013,6 +10324,22 @@
             "type": "object",
             "nullable": true
           },
+          "liveId": {
+            "type": "object",
+            "nullable": true,
+            "description": "id эфира для LIVE_* — без него по уведомлению некуда перейти"
+          },
+          "requestId": {
+            "type": "object",
+            "nullable": true,
+            "example": 42,
+            "description": "id заявки в эфир (LIVE_JOIN_REQUEST). Именно его принимает POST /live/requests/{id}/accept | /decline"
+          },
+          "postThumbUrl": {
+            "type": "object",
+            "nullable": true,
+            "description": "Миниатюра поста (первое медиа) — картинка справа в строке уведомления"
+          },
           "isRead": {
             "type": "boolean",
             "example": false
@@ -10055,6 +10382,10 @@
       "ProfileViewDto": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string",
+            "description": "id строки — курсор для следующей страницы"
+          },
           "viewer": {
             "$ref": "#/components/schemas/UserBriefDto"
           },
@@ -10064,6 +10395,7 @@
           }
         },
         "required": [
+          "id",
           "viewer",
           "viewedAt"
         ]
@@ -10592,19 +10924,6 @@
           "joinedAt"
         ]
       },
-      "LiveCommentInputDto": {
-        "type": "object",
-        "properties": {
-          "text": {
-            "type": "string",
-            "example": "Огонь! 🔥",
-            "maxLength": 300
-          }
-        },
-        "required": [
-          "text"
-        ]
-      },
       "LiveCommentDto": {
         "type": "object",
         "properties": {
@@ -10628,31 +10947,6 @@
           "user",
           "text",
           "createdAt"
-        ]
-      },
-      "LiveLikeResultDto": {
-        "type": "object",
-        "properties": {
-          "likesCount": {
-            "type": "number",
-            "example": 341
-          }
-        },
-        "required": [
-          "likesCount"
-        ]
-      },
-      "LiveReactionInputDto": {
-        "type": "object",
-        "properties": {
-          "emoji": {
-            "type": "string",
-            "example": "❤️",
-            "description": "Любой эмодзи, включая составные (👨‍👩‍👧‍👦, 🏳️‍🌈, 👍🏽)"
-          }
-        },
-        "required": [
-          "emoji"
         ]
       },
       "JoinRequestDto": {
@@ -10682,6 +10976,44 @@
           "user",
           "status",
           "createdAt"
+        ]
+      },
+      "LiveCommentInputDto": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "example": "Огонь! 🔥",
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "LiveLikeResultDto": {
+        "type": "object",
+        "properties": {
+          "likesCount": {
+            "type": "number",
+            "example": 341
+          }
+        },
+        "required": [
+          "likesCount"
+        ]
+      },
+      "LiveReactionInputDto": {
+        "type": "object",
+        "properties": {
+          "emoji": {
+            "type": "string",
+            "example": "❤️",
+            "description": "Любой эмодзи, включая составные (👨‍👩‍👧‍👦, 🏳️‍🌈, 👍🏽)"
+          }
+        },
+        "required": [
+          "emoji"
         ]
       },
       "CameraDto": {

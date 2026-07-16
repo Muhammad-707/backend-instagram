@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { FollowStatus, NotifType, Prisma } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
@@ -11,6 +11,7 @@ import { StorageService } from '../../storage/storage.service';
 import { UploadedFile } from '../../storage/storage.types';
 import {
   ActivityItemDto,
+  CollectionDto,
   ActivityQueryDto,
   AvatarDto,
   IsFollowingDto,
@@ -243,6 +244,43 @@ export class ProfileService {
     return this.pagePosts({ isArchived: false, favorites: { some: { userId } } }, dto);
   }
 
+  /**
+   * Коллекции сохранённого. Обложка — первое медиа последнего добавленного поста
+   * (как в IG), либо явная coverUrl коллекции, если её задали.
+   *
+   * Отдаём и коллекцию «без названия» (collectionId = null) отдельной строкой?
+   * Нет: POST /posts/{id}/favorite без `collection` кладёт пост вне коллекций,
+   * такие посты уже видны в /profile/favorites. Здесь — только именованные,
+   * иначе фронт показал бы безымянную папку, которую нельзя выбрать при сохранении.
+   */
+  async collections(userId: string): Promise<CollectionDto[]> {
+    const rows = await this.prisma.collection.findMany({
+      where: { userId },
+      select: {
+        name: true,
+        coverUrl: true,
+        _count: { select: { favorites: true } },
+        favorites: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            post: { select: { media: { select: { url: true, thumbUrl: true }, orderBy: { order: 'asc' }, take: 1 } } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return rows.map((c) => {
+      const media = c.favorites[0]?.post.media[0];
+      return {
+        name: c.name,
+        postsCount: c._count.favorites,
+        coverUrl: c.coverUrl ?? media?.thumbUrl ?? media?.url ?? null,
+      };
+    });
+  }
+
   /** Репосты: модели Repost нет — репост это Share, сделанный мной. */
   async reposts(
     userId: string,
@@ -289,45 +327,81 @@ export class ProfileService {
     const range: Prisma.DateTimeFilter = {};
     if (dto.from) range.gte = new Date(dto.from);
     if (dto.to) range.lte = new Date(dto.to);
-    const at = dto.from || dto.to ? range : undefined;
+
+    /**
+     * Курсор здесь — ВРЕМЯ последнего элемента, а не id.
+     *
+     * Раньше `cursor` был объявлен в ActivityQueryDto (и в Swagger), но не
+     * использовался: каждая «следующая» страница возвращала ту же первую —
+     * бесконечный список у фронта. Взять id нельзя: список слит из четырёх
+     * таблиц, и id=5 есть и у лайка, и у комментария. Общий порядок здесь
+     * задаёт только время, поэтому и курсор — время.
+     */
+    if (dto.cursor) {
+      const before = new Date(dto.cursor);
+      if (Number.isNaN(before.getTime())) {
+        throw new BadRequestException('cursor: ожидается ISO-дата (поле `at` последнего элемента)');
+      }
+      // lt, а не lte: иначе последний элемент страницы повторился бы на следующей.
+      range.lt = before;
+    }
+
+    const at = Object.keys(range).length > 0 ? range : undefined;
 
     const [likes, comments, views, searches] = await Promise.all([
       this.prisma.postLike.findMany({
         where: { userId, ...(at ? { createdAt: at } : {}) },
-        select: { postId: true, createdAt: true },
+        select: { id: true, postId: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
         take: dto.limit,
       }),
       this.prisma.comment.findMany({
         where: { userId, ...(at ? { createdAt: at } : {}) },
-        select: { postId: true, text: true, createdAt: true },
+        select: { id: true, postId: true, text: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
         take: dto.limit,
       }),
       this.prisma.postView.findMany({
         where: { userId, ...(at ? { viewedAt: at } : {}) },
-        select: { postId: true, viewedAt: true },
+        select: { id: true, postId: true, viewedAt: true },
         orderBy: { viewedAt: 'desc' },
         take: dto.limit,
       }),
       this.prisma.searchHistory.findMany({
         where: { userId, ...(at ? { createdAt: at } : {}) },
-        select: { text: true, createdAt: true },
+        select: { id: true, text: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
         take: dto.limit,
       }),
     ]);
 
+    // id составной («LIKE:12»): сам по себе id строки не уникален между таблицами.
     const items: ActivityItemDto[] = [
-      ...likes.map((l) => ({ type: 'LIKE' as const, at: l.createdAt, postId: l.postId })),
+      ...likes.map((l) => ({
+        id: `LIKE:${l.id}`,
+        type: 'LIKE' as const,
+        at: l.createdAt,
+        postId: l.postId,
+      })),
       ...comments.map((c) => ({
+        id: `COMMENT:${c.id}`,
         type: 'COMMENT' as const,
         at: c.createdAt,
         postId: c.postId,
         text: c.text,
       })),
-      ...views.map((v) => ({ type: 'POST_VIEW' as const, at: v.viewedAt, postId: v.postId })),
-      ...searches.map((s) => ({ type: 'SEARCH' as const, at: s.createdAt, text: s.text })),
+      ...views.map((v) => ({
+        id: `POST_VIEW:${v.id}`,
+        type: 'POST_VIEW' as const,
+        at: v.viewedAt,
+        postId: v.postId,
+      })),
+      ...searches.map((s) => ({
+        id: `SEARCH:${s.id}`,
+        type: 'SEARCH' as const,
+        at: s.createdAt,
+        text: s.text,
+      })),
     ];
 
     return items.sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, dto.limit);

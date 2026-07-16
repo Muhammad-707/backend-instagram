@@ -1,5 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CursorPage } from '../../common/pagination/cursor.dto';
 import {
@@ -34,6 +40,23 @@ export class UsersController {
     @Query() dto: SearchUsersDto,
   ): Promise<CursorPage<UserBriefDto>> {
     return this.usersService.search(userId, dto);
+  }
+
+  // Стоит до параметрических роутов, иначе 'by-username' поймается как параметр.
+  @Get('by-username/:userName')
+  @ApiOperation({
+    summary: 'Профиль по точному userName (регистронезависимо)',
+    description:
+      'Для @упоминаний и ссылок /u/{userName}: search() ищет подстрокой и по fullName, ' +
+      'поэтому точное совпадение им не получить. Заблокированные — 404, как и в поиске.',
+  })
+  @ApiOkResponse({ type: UserBriefDto })
+  @ApiNotFoundResponse({ description: 'Пользователь не найден' })
+  async findByUserName(
+    @CurrentUser('id') userId: string,
+    @Param('userName') userName: string,
+  ): Promise<UserBriefDto> {
+    return this.usersService.findByUserName(userId, userName);
   }
 
   @Get('suggestions')

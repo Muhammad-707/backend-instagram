@@ -1,7 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { buildCursorPage, CursorPage } from '../../common/pagination/cursor.dto';
+import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PostDto } from '../posts/dto/post.dto';
+import { PostsService } from '../posts/posts.service';
 import {
   CreateLocationDto,
   DeletedDto,
@@ -22,7 +24,10 @@ const LOCATION_SELECT = {
 
 @Injectable()
 export class LocationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly posts_: PostsService,
+  ) {}
 
   async list(dto: LocationQueryDto): Promise<CursorPage<LocationDto>> {
     const q = dto.q?.trim();
@@ -49,6 +54,17 @@ export class LocationsService {
     const row = await this.prisma.location.findUnique({ where: { id }, select: LOCATION_SELECT });
     if (!row) throw new NotFoundException('Локация не найдена');
     return row;
+  }
+
+  /**
+   * Лента локации. Всю выдачу отдаём в PostsService.explore() вместо своего
+   * findMany: там уже живут правила приватности и блокировок. Свой запрос
+   * означал бы вторую копию этих правил, которая рано или поздно разъедется
+   * с оригиналом — и приватные посты утекли бы именно здесь.
+   */
+  async posts(viewerId: string, id: number, dto: CursorDto): Promise<CursorPage<PostDto>> {
+    await this.get(id); // 404, если локации нет — иначе отдали бы пустой список
+    return this.posts_.explore(viewerId, { ...dto, locationId: id });
   }
 
   async create(dto: CreateLocationDto): Promise<LocationDto> {

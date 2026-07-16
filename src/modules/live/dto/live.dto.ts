@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { JoinStatus, LiveStatus } from '@prisma/client';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { IsEmoji } from '../../../common/validators/is-emoji.decorator';
 import { UserBriefDto } from '../../users/dto/users.dto';
 
@@ -114,4 +114,14 @@ export class LiveStatsDto {
 
 export class LiveOkDto {
   @ApiProperty({ example: true }) ok!: boolean;
+}
+
+export class LiveRequestsQueryDto {
+  @ApiPropertyOptional({
+    enum: JoinStatus,
+    description: 'Фильтр по статусу. Обычно PENDING — те, что ждут решения хоста.',
+  })
+  @IsOptional()
+  @IsEnum(JoinStatus)
+  status?: JoinStatus;
 }
