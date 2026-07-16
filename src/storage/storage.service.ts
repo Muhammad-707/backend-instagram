@@ -81,12 +81,21 @@ export class StorageService implements OnModuleInit {
     return `${FOLDER[kind]}/${yyyy}/${mm}/${randomUUID()}.${ext}`;
   }
 
+  /**
+   * Возвращает КЛЮЧ, а не URL — и в БД кладётся именно ключ.
+   *
+   * Раньше put() отдавал абсолютный URL, и он же сохранялся. Из-за этого смена
+   * домена ломала не только картинки: keyFromUrl() сравнивал строку через
+   * startsWith(текущий base) и на старых записях возвращал null — а значит,
+   * перставали работать стрим музыки и удаление файлов, а не только <img>.
+   * Ключ такой привязки к домену не имеет; URL собирается при отдаче.
+   */
   async put(key: string, buffer: Buffer, mime: string): Promise<string> {
     await this.client.putObject(this.bucket, key, buffer, buffer.length, {
       'Content-Type': mime,
       'Cache-Control': 'public, max-age=31536000, immutable',
     });
-    return this.publicUrlFor(key);
+    return key;
   }
 
   async remove(key: string): Promise<void> {
@@ -102,8 +111,21 @@ export class StorageService implements OnModuleInit {
     }
   }
 
-  publicUrlFor(key: string): string {
-    return `${this.publicUrl}/${key}`;
+  /**
+   * Публичная ссылка из того, что лежит в БД.
+   *
+   * Принимает ключ ИЛИ старый абсолютный URL: во втором случае берёт из него
+   * ключ и пересобирает ссылку на ТЕКУЩИЙ S3_PUBLIC_URL. Благодаря этому
+   * записи с `http://localhost:9000/...`, уже лежащие в базе, отдаются с
+   * рабочего домена без миграции данных — а миграция лишь наводит порядок.
+   */
+  publicUrlFor(value: string | null | undefined): string | null {
+    if (!value) return null;
+    // Чужая ссылка (picsum/pravatar из сидов) — отдаём как есть, не трогаем.
+    if (/^https?:\/\//i.test(value) && !this.isOwnUrl(value)) return value;
+
+    const key = this.keyFromUrl(value);
+    return key ? `${this.publicUrl}/${key}` : value;
   }
 
   /** Размер и mime объекта — нужны, чтобы посчитать Content-Range до чтения тела. */
@@ -131,10 +153,52 @@ export class StorageService implements OnModuleInit {
     return this.client.getPartialObject(this.bucket, key, offset, length);
   }
 
-  /** Ключ из публичной ссылки — обратная операция к publicUrlFor(). */
-  keyFromUrl(url: string): string | null {
-    const base = `${this.publicUrl}/`;
-    return url.startsWith(base) ? url.slice(base.length) : null;
+  /**
+   * Ссылка ведёт в НАШЕ хранилище?
+   *
+   * В БД лежат и чужие абсолютные URL — сиды заполняют аватары и медиа
+   * картинками с i.pravatar.cc и picsum.photos. Их нельзя ни разбирать на
+   * ключи, ни пересобирать на свой домен: `https://picsum.photos/seed/x/1080`
+   * превратился бы в `https://<наш-s3>/seed/x/1080`, и все эти картинки просто
+   * умерли бы.
+   *
+   * Признак «наше» — имя бакета в пути (переживает смену домена) либо текущий
+   * base. Ограничение: если публичный домен без бакета в пути (напр. R2
+   * `https://cdn.example.com/<key>`) сменится, старые строки станут «чужими» и
+   * останутся как есть. Для новых записей это неважно — в БД уже ключ.
+   */
+  private isOwnUrl(value: string): boolean {
+    if (`${value}/`.startsWith(`${this.publicUrl}/`)) return true;
+    try {
+      return new URL(value).pathname.includes(`/${this.bucket}/`);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Ключ из того, что лежит в БД: принимает и ключ (новый формат), и наш
+   * абсолютный URL (записи до перехода на ключи, в т.ч. с localhost:9000).
+   *
+   * Для чужой ссылки — null: удалять картинку picsum из своего S3 нечего.
+   * Сравнения с текущим base здесь нет намеренно — именно оно ломало старые
+   * записи после переезда домена.
+   */
+  keyFromUrl(value: string): string | null {
+    if (!value) return null;
+    if (!/^https?:\/\//i.test(value)) return value.replace(/^\/+/, ''); // уже ключ
+    if (!this.isOwnUrl(value)) return null;
+
+    let path: string;
+    try {
+      path = new URL(value).pathname;
+    } catch {
+      return null;
+    }
+
+    const marker = `/${this.bucket}/`;
+    const at = path.indexOf(marker);
+    return at >= 0 ? path.slice(at + marker.length) : path.replace(/^\/+/, '');
   }
 
   /** Временная ссылка на приватный объект (пригодится, если закроем bucket в проде). */

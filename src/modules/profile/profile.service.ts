@@ -209,9 +209,13 @@ export class ProfileService {
     }
   }
 
-  private keyFromUrl(url: string): string | null {
-    const base = this.storage.publicUrlFor('');
-    return url.startsWith(base) ? url.slice(base.length) : null;
+  /**
+   * Своя копия удалена: она сравнивала строку с текущим base через startsWith
+   * и на записях с другим доменом отдавала null — старый аватар молча оставался
+   * в S3 навсегда. Разбор ключа теперь один на проект, в StorageService.
+   */
+  private keyFromUrl(value: string): string | null {
+    return this.storage.keyFromUrl(value);
   }
 
   // ─────────────── вкладки профиля ───────────────

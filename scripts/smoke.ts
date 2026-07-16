@@ -285,6 +285,23 @@ async function main(): Promise<void> {
   rf.append('isReel', 'true');
   await call('POST', '/posts', { token: t1, form: rf, route: '/posts', expect: [201, 200] });
 
+  // Вазифаи 2 (критерия): дар БД калид, вале ба фронт URL-и МУТЛАҚ меравад.
+  const createdMedia = post.data?.media?.[0]?.url;
+  check(
+    'медиа: url мутлақ аст, на калиди урён',
+    typeof createdMedia === 'string' && /^https?:\/\//.test(createdMedia),
+    `гирифт: ${createdMedia}`,
+  );
+  const dbKey = await prisma.postMedia.findFirst({
+    where: { postId: postId },
+    select: { url: true },
+  });
+  check(
+    'медиа: дар БД КАЛИД нигоҳ дошта мешавад, на URL',
+    !!dbKey && !/^https?:\/\//.test(dbKey.url),
+    `дар БД: ${dbKey?.url}`,
+  );
+
   await call('GET', '/posts', { token: t1 });
   await call('GET', '/posts/feed', { token: t1 });
   await call('GET', '/posts/reels', { token: t1 });
