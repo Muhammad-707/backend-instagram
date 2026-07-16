@@ -8,6 +8,7 @@ import {
   WebSocketGateway,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { SocketService } from '../socket/socket.service';
 import { LiveRealtimeService, liveRoom, liveUserRoom } from './live-realtime.service';
 
 interface AccessPayload {
@@ -34,6 +35,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly bridge: LiveRealtimeService,
+    private readonly socket: SocketService,
   ) {}
 
   afterInit(server: Server): void {
@@ -42,19 +44,33 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection {
   }
 
   async handleConnection(client: AuthedSocket): Promise<void> {
-    const token = this.extractToken(client);
-    if (!token) {
+    const userId = await this.authenticate(client);
+    if (!userId) {
       client.disconnect(true);
       return;
     }
+    client.userId = userId;
+    await client.join(liveUserRoom(userId));
+  }
+
+  /**
+   * Как и в /rt: основной путь для браузера — одноразовый `auth.ticket`
+   * (access-токен лежит в httpOnly-куке и в cross-origin сокет не попадёт),
+   * `auth.token` оставлен для клиентов с токеном на руках.
+   */
+  private async authenticate(client: AuthedSocket): Promise<string | null> {
+    const ticket = (client.handshake.auth as { ticket?: string } | undefined)?.ticket;
+    if (ticket) return this.socket.burn(ticket);
+
+    const token = this.extractToken(client);
+    if (!token) return null;
     try {
       const payload = await this.jwt.verifyAsync<AccessPayload>(token, {
         secret: this.config.get<string>('JWT_SECRET', 'change_me_access_secret'),
       });
-      client.userId = payload.sub;
-      await client.join(liveUserRoom(payload.sub));
+      return payload.sub;
     } catch {
-      client.disconnect(true);
+      return null;
     }
   }
 

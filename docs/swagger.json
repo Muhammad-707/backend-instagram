@@ -375,6 +375,7 @@
     },
     "/api/auth/me": {
       "get": {
+        "description": "Отдаёт ПЛОСКИЙ AuthUserDto — никакого конверта `{ user, profile }` нет и не было. Поля профиля, которые сюда входят, лежат на верхнем уровне (avatarUrl). Формулировка «пользователь + профиль» раньше читалась как конверт, из-за чего фронт разбирал оба варианта — вторая ветка не нужна. Полный профиль (счётчики, about, website) — GET /profile/me.",
         "operationId": "AuthController_me",
         "parameters": [],
         "responses": {
@@ -397,7 +398,7 @@
             "bearer": []
           }
         ],
-        "summary": "Текущий пользователь + профиль",
+        "summary": "Текущий пользователь",
         "tags": [
           "auth"
         ]
@@ -4666,6 +4667,34 @@
         "summary": "Ответы на заметку (только автору)",
         "tags": [
           "notes"
+        ]
+      }
+    },
+    "/api/socket/ticket": {
+      "post": {
+        "description": "Обычный HTTP-запрос: httpOnly-кука с access-токеном сюда доедет, а в cross-origin сокет — нет. Тикет одноразовый, живёт 30 сек, сжигается при первом же подключении: io(url, { auth: { ticket } }). Повторный или просроченный → disconnect. Подключение с `auth.token` тоже работает — для серверных клиентов, у которых токен есть.",
+        "operationId": "SocketController_ticket",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SocketTicketDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Одноразовый тикет для подключения сокета",
+        "tags": [
+          "socket"
         ]
       }
     },
@@ -9924,6 +9953,25 @@
           "text",
           "author",
           "createdAt"
+        ]
+      },
+      "SocketTicketDto": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string",
+            "example": "3f1c0a5e-8b2d-4c7a-9f10-5e6d7c8b9a01",
+            "description": "Одноразовый тикет для io(url, { auth: { ticket } })"
+          },
+          "expiresInSec": {
+            "type": "number",
+            "example": 30,
+            "description": "Сколько секунд тикет действителен"
+          }
+        },
+        "required": [
+          "ticket",
+          "expiresInSec"
         ]
       },
       "ChatListItemDto": {

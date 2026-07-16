@@ -165,7 +165,15 @@ export class AuthController {
 
   @Get('me')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Текущий пользователь + профиль' })
+  @ApiOperation({
+    summary: 'Текущий пользователь',
+    description:
+      'Отдаёт ПЛОСКИЙ AuthUserDto — никакого конверта `{ user, profile }` нет и не было. ' +
+      'Поля профиля, которые сюда входят, лежат на верхнем уровне (avatarUrl). ' +
+      'Формулировка «пользователь + профиль» раньше читалась как конверт, из-за чего ' +
+      'фронт разбирал оба варианта — вторая ветка не нужна. ' +
+      'Полный профиль (счётчики, about, website) — GET /profile/me.',
+  })
   @ApiOkResponse({ type: AuthUserDto })
   @ApiUnauthorizedResponse({ description: 'Нет или истёк access-токен' })
   async me(@CurrentUser() user: JwtUser): Promise<AuthUserDto> {

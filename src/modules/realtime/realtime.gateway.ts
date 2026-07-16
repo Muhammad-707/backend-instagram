@@ -11,6 +11,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../../prisma/prisma.service';
+import { SocketService } from '../socket/socket.service';
 import { PresenceService } from './presence.service';
 import { RealtimeService, userRoom } from './realtime.service';
 
@@ -49,6 +50,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly prisma: PrismaService,
     private readonly presence: PresenceService,
     private readonly realtime: RealtimeService,
+    private readonly socket: SocketService,
   ) {}
 
   afterInit(server: Server): void {
@@ -58,34 +60,50 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   }
 
   async handleConnection(client: AuthedSocket): Promise<void> {
-    const token = this.extractToken(client);
-    if (!token) {
+    const userId = await this.authenticate(client);
+    if (!userId) {
       client.disconnect(true);
       return;
     }
 
-    let payload: AccessPayload;
-    try {
-      payload = await this.jwt.verifyAsync<AccessPayload>(token, {
-        secret: this.config.get<string>('JWT_SECRET', 'change_me_access_secret'),
-      });
-    } catch {
-      client.disconnect(true);
-      return;
-    }
-
-    client.userId = payload.sub;
-    await client.join(userRoom(payload.sub));
-    await this.presence.touch(payload.sub);
+    client.userId = userId;
+    await client.join(userRoom(userId));
+    await this.presence.touch(userId);
     await this.prisma.presence
       .upsert({
-        where: { userId: payload.sub },
-        create: { userId: payload.sub, isOnline: true, lastSeenAt: new Date() },
+        where: { userId },
+        create: { userId, isOnline: true, lastSeenAt: new Date() },
         update: { isOnline: true, lastSeenAt: new Date() },
       })
       .catch(() => undefined);
 
-    await this.broadcastPresence(payload.sub, true);
+    await this.broadcastPresence(userId, true);
+  }
+
+  /**
+   * Два способа, оба возвращают userId или null.
+   *
+   * 1) `auth.ticket` — основной для браузера: access-токен лежит в
+   *    httpOnly-куке, из JS его не достать, а cross-origin сокету куку не
+   *    отдадут. Тикет берётся отдельным HTTP-запросом (POST /socket/ticket).
+   *    Одноразовый: burn() сжигает его атомарно.
+   * 2) `auth.token` — оставлен для клиентов, у которых access-токен на руках
+   *    (серверные интеграции, тесты). Убирать нельзя: сломает существующих.
+   */
+  private async authenticate(client: AuthedSocket): Promise<string | null> {
+    const ticket = (client.handshake.auth as { ticket?: string } | undefined)?.ticket;
+    if (ticket) return this.socket.burn(ticket);
+
+    const token = this.extractToken(client);
+    if (!token) return null;
+    try {
+      const payload = await this.jwt.verifyAsync<AccessPayload>(token, {
+        secret: this.config.get<string>('JWT_SECRET', 'change_me_access_secret'),
+      });
+      return payload.sub;
+    } catch {
+      return null;
+    }
   }
 
   async handleDisconnect(client: AuthedSocket): Promise<void> {

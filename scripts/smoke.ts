@@ -155,6 +155,15 @@ async function main(): Promise<void> {
     expect: [200, 400],
   });
 
+  // ── socket ────────────────────────────────────────────────────────────
+  // Вазифаи 3: тикет барои сокет (санҷиши пурраи сӯхтан — scripts/socket-check.ts).
+  const tk = await call('POST', '/socket/ticket', { token: t1 });
+  check(
+    'socket: тикет + TTL 30с',
+    typeof tk.data?.ticket === 'string' && tk.data?.expiresInSec === 30,
+    JSON.stringify(tk.data),
+  );
+
   // ── upload ────────────────────────────────────────────────────────────
   const up = await call('POST', '/upload', { token: t1, form: await imageForm('files') });
   const upKey: string | undefined = up.data?.[0]?.key ?? up.data?.files?.[0]?.key;
