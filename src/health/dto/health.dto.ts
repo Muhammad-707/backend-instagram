@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class HealthDto {
   @ApiProperty({ example: 'ok', enum: ['ok', 'degraded'] })
@@ -18,4 +18,16 @@ export class HealthDto {
 
   @ApiProperty({ example: '2026-07-14T10:00:00.000Z' })
   timestamp!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Сабаби хатогии пайваст барои ҳар сервиси афтода. Танҳо вақте ҳаст, ки чизе «down» бошад. ' +
+      'Парол, хост ва IP пеш аз ирсол пок карда мешаванд.',
+    example: {
+      database: "Can't reach database server at `***`",
+      redis: 'connect ECONNREFUSED ***',
+    },
+    additionalProperties: { type: 'string' },
+  })
+  reasons?: Record<string, string>;
 }
