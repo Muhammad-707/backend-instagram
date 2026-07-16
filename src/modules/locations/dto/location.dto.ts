@@ -62,19 +62,19 @@ export class LocationDto {
   @ApiProperty({ example: 'Dushanbe' })
   city!: string;
 
-  @ApiPropertyOptional({ nullable: true, example: 'Sughd' })
+  @ApiPropertyOptional({ type: String, nullable: true, example: 'Sughd' })
   state?: string | null;
 
-  @ApiPropertyOptional({ nullable: true, example: '734000' })
+  @ApiPropertyOptional({ type: String, nullable: true, example: '734000' })
   zipCode?: string | null;
 
   @ApiProperty({ example: 'Tajikistan' })
   country!: string;
 
-  @ApiPropertyOptional({ nullable: true, example: 38.5598 })
+  @ApiPropertyOptional({ type: Number, nullable: true, example: 38.5598 })
   lat?: number | null;
 
-  @ApiPropertyOptional({ nullable: true, example: 68.787 })
+  @ApiPropertyOptional({ type: Number, nullable: true, example: 68.787 })
   lng?: number | null;
 }
 

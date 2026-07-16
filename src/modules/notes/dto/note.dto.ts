@@ -66,7 +66,7 @@ export class NoteMusicDto {
   @ApiProperty()
   streamUrl!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   coverUrl?: string | null;
 }
 
@@ -83,7 +83,7 @@ export class NoteDto {
   @ApiPropertyOptional({ type: NoteMusicDto, nullable: true })
   music?: NoteMusicDto | null;
 
-  @ApiPropertyOptional({ nullable: true, example: '#FFB6C1' })
+  @ApiPropertyOptional({ type: String, nullable: true, example: '#FFB6C1' })
   bgColor?: string | null;
 
   @ApiProperty({ example: 2 })

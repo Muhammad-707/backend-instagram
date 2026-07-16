@@ -24,25 +24,27 @@ export class NotificationDto {
   })
   message!: string;
 
-  @ApiPropertyOptional({ nullable: true, example: 12 })
+  @ApiPropertyOptional({ type: Number, nullable: true, example: 12 })
   postId?: number | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: Number, nullable: true })
   commentId?: number | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: Number, nullable: true })
   storyId?: number | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: Number, nullable: true })
   noteId?: number | null;
 
   @ApiPropertyOptional({
+    type: String,
     nullable: true,
     description: 'id эфира для LIVE_* — без него по уведомлению некуда перейти',
   })
   liveId?: string | null;
 
   @ApiPropertyOptional({
+    type: Number,
     nullable: true,
     example: 42,
     description:
@@ -52,6 +54,7 @@ export class NotificationDto {
   requestId?: number | null;
 
   @ApiPropertyOptional({
+    type: String,
     nullable: true,
     description: 'Миниатюра поста (первое медиа) — картинка справа в строке уведомления',
   })

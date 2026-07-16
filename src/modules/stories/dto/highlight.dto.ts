@@ -46,7 +46,7 @@ export class HighlightDto {
   @ApiProperty({ example: 'Путешествия' })
   title!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   coverUrl?: string | null;
 
   @ApiProperty({ example: 3, description: 'Сколько историй в актуальном' })

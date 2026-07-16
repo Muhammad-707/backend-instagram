@@ -56,11 +56,11 @@ export class AudioDto {
 export class LiveDto {
   @ApiProperty() id!: string;
   @ApiProperty({ type: UserBriefDto }) host!: UserBriefDto;
-  @ApiPropertyOptional({ nullable: true }) title!: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) title!: string | null;
   @ApiProperty({ enum: LiveStatus }) status!: LiveStatus;
   @ApiProperty() isCameraOn!: boolean;
   @ApiProperty() isAudioOn!: boolean;
-  @ApiPropertyOptional({ nullable: true }) coverUrl!: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) coverUrl!: string | null;
   @ApiProperty({ example: 12 }) viewersCount!: number;
   @ApiProperty({ example: 340 }) likesCount!: number;
   @ApiProperty({ type: String, format: 'date-time' }) startedAt!: Date;

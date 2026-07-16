@@ -28,10 +28,11 @@ export class SpotifyTrackDto {
   @ApiProperty({ example: 'Ed Sheeran' })
   artist!: string;
 
-  @ApiPropertyOptional({ example: 'https://i.scdn.co/image/ab67616d...', nullable: true })
+  @ApiPropertyOptional({ type: String, example: 'https://i.scdn.co/image/ab67616d...', nullable: true })
   albumCover!: string | null;
 
   @ApiPropertyOptional({
+    type: String,
     example: 'https://p.scdn.co/mp3-preview/...',
     nullable: true,
     description: '30-секундный отрывок (у части треков отсутствует → null)',

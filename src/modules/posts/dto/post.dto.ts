@@ -127,19 +127,19 @@ export class PostMediaDto {
   @ApiProperty({ example: 0 })
   order!: number;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: Number, nullable: true })
   width?: number | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: Number, nullable: true })
   height?: number | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Секунды — для видео' })
+  @ApiPropertyOptional({ type: Number, nullable: true, description: 'Секунды — для видео' })
   duration?: number | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Постер видео' })
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'Постер видео' })
   thumbUrl?: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   filter?: string | null;
 }
 
@@ -175,7 +175,7 @@ export class PostDto {
   @ApiProperty({ example: 12 })
   id!: number;
 
-  @ApiPropertyOptional({ nullable: true, maxLength: CAPTION_MAX })
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: CAPTION_MAX })
   caption?: string | null;
 
   @ApiProperty({ example: false })

@@ -7514,11 +7514,14 @@
             "example": "eraj@example.com"
           },
           "phone": {
-            "type": "object",
+            "type": "string",
+            "nullable": true,
             "example": "+992901234567"
           },
           "dob": {
-            "type": "object",
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
             "example": "2000-05-17T00:00:00.000Z"
           },
           "role": {
@@ -7538,7 +7541,7 @@
             "example": false
           },
           "avatarUrl": {
-            "type": "object",
+            "type": "string",
             "description": "Аватар из Profile",
             "nullable": true
           }
@@ -7619,7 +7622,7 @@
             "type": "string"
           },
           "text": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "type": {
@@ -7639,26 +7642,26 @@
             ]
           },
           "mediaUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "Фото/видео/голос/стикер"
           },
           "duration": {
-            "type": "object",
+            "type": "number",
             "nullable": true,
             "description": "Секунды — для голосового/видео"
           },
           "replyToId": {
-            "type": "object",
+            "type": "number",
             "nullable": true
           },
           "sharedPostId": {
-            "type": "object",
+            "type": "number",
             "nullable": true,
             "description": "id отправленного поста"
           },
           "noteSnapshot": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "Превью заметки (переживает её смерть)"
           },
@@ -7669,7 +7672,8 @@
             }
           },
           "editedAt": {
-            "type": "object",
+            "type": "string",
+            "format": "date-time",
             "nullable": true,
             "description": "Когда отредактировано"
           },
@@ -7915,7 +7919,7 @@
             "example": "Eraj Karimov"
           },
           "avatarUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "isVerified": {
@@ -7950,7 +7954,7 @@
             "example": "Eraj Karimov"
           },
           "avatarUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "isVerified": {
@@ -8147,16 +8151,16 @@
             "example": "Eraj Karimov"
           },
           "avatarUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "about": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "maxLength": 150
           },
           "website": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "gender": {
@@ -8170,11 +8174,12 @@
             "example": "HIDDEN"
           },
           "occupation": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "dob": {
-            "type": "object",
+            "type": "string",
+            "format": "date-time",
             "nullable": true
           },
           "showThreadsBadge": {
@@ -8238,7 +8243,7 @@
             "example": 7
           },
           "coverUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "Превью последнего сохранённого поста (или явная обложка коллекции)"
           }
@@ -8256,7 +8261,7 @@
             "example": 12
           },
           "caption": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "isReel": {
@@ -8264,7 +8269,7 @@
             "example": false
           },
           "coverUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "Первое медиа — обложка в сетке"
           },
@@ -8305,7 +8310,7 @@
             "example": "The Weeknd"
           },
           "coverUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "savedAt": {
@@ -8431,7 +8436,7 @@
         "type": "object",
         "properties": {
           "avatarUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "null после удаления"
           }
@@ -8452,16 +8457,16 @@
             "example": "Eraj Karimov"
           },
           "avatarUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "about": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "maxLength": 150
           },
           "website": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "gender": {
@@ -8475,11 +8480,12 @@
             "example": "HIDDEN"
           },
           "occupation": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "dob": {
-            "type": "object",
+            "type": "string",
+            "format": "date-time",
             "nullable": true
           },
           "showThreadsBadge": {
@@ -8630,7 +8636,7 @@
             "example": "Eraj Karimov"
           },
           "avatarUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "isVerified": {
@@ -8671,7 +8677,7 @@
             "example": "Eraj Karimov"
           },
           "avatarUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "isVerified": {
@@ -8744,7 +8750,7 @@
             "example": "Eraj Karimov"
           },
           "avatarUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "isVerified": {
@@ -8799,7 +8805,7 @@
             "description": "Длительность в секундах (посчитана ffprobe)"
           },
           "genre": {
-            "type": "object",
+            "type": "string",
             "example": "Lo-Fi",
             "nullable": true
           },
@@ -8865,12 +8871,12 @@
             "example": "Ed Sheeran"
           },
           "albumCover": {
-            "type": "object",
+            "type": "string",
             "example": "https://i.scdn.co/image/ab67616d...",
             "nullable": true
           },
           "previewUrl": {
-            "type": "object",
+            "type": "string",
             "example": "https://p.scdn.co/mp3-preview/...",
             "nullable": true,
             "description": "30-секундный отрывок (у части треков отсутствует → null)"
@@ -8919,25 +8925,25 @@
             "example": 0
           },
           "width": {
-            "type": "object",
+            "type": "number",
             "nullable": true
           },
           "height": {
-            "type": "object",
+            "type": "number",
             "nullable": true
           },
           "duration": {
-            "type": "object",
+            "type": "number",
             "nullable": true,
             "description": "Секунды — для видео"
           },
           "thumbUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "Постер видео"
           },
           "filter": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           }
         },
@@ -9009,7 +9015,7 @@
             "example": 12
           },
           "caption": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "maxLength": 2200
           },
@@ -9175,7 +9181,7 @@
             ]
           },
           "parentId": {
-            "type": "object",
+            "type": "number",
             "example": null,
             "nullable": true,
             "description": "id родителя — для ответов"
@@ -9355,11 +9361,11 @@
             "type": "string"
           },
           "coverUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "startSec": {
-            "type": "object",
+            "type": "number",
             "nullable": true
           }
         },
@@ -9390,7 +9396,7 @@
             "example": "IMAGE"
           },
           "thumbUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "duration": {
@@ -9408,12 +9414,24 @@
             ]
           },
           "overlays": {
-            "type": "object",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
             "nullable": true,
-            "description": "overlays (JSON)"
+            "description": "Разобранный JSON: текст/стикеры/эффекты. ВНИМАНИЕ: на запись (POST /stories) это поле принимает СТРОКУ с JSON, а на чтение возвращается массивом.",
+            "example": [
+              {
+                "type": "text",
+                "value": "Привет!",
+                "x": 0.5,
+                "y": 0.3
+              }
+            ]
           },
           "filter": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "closeFriendsOnly": {
@@ -9421,7 +9439,7 @@
             "example": false
           },
           "fromPostId": {
-            "type": "object",
+            "type": "number",
             "nullable": true,
             "description": "id поста, если история — репост"
           },
@@ -9585,7 +9603,7 @@
             "description": "Этот зритель лайкнул"
           },
           "reaction": {
-            "type": "object",
+            "type": "string",
             "example": "❤️",
             "nullable": true,
             "description": "Реакция зрителя, если была"
@@ -9644,7 +9662,7 @@
             "example": "Путешествия"
           },
           "coverUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "count": {
@@ -9675,7 +9693,7 @@
             "example": "Путешествия"
           },
           "coverUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "count": {
@@ -9741,7 +9759,7 @@
             "type": "string"
           },
           "coverUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           }
         },
@@ -9781,7 +9799,7 @@
             ]
           },
           "bgColor": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "example": "#FFB6C1"
           },
@@ -9990,7 +10008,7 @@
             ]
           },
           "peerNickname": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "Никнейм собеседника в этом чате"
           },
@@ -10013,7 +10031,8 @@
             ]
           },
           "lastMessageAt": {
-            "type": "object",
+            "type": "string",
+            "format": "date-time",
             "nullable": true
           },
           "unreadCount": {
@@ -10027,7 +10046,8 @@
             "description": "Собеседник онлайн"
           },
           "lastSeenAt": {
-            "type": "object",
+            "type": "string",
+            "format": "date-time",
             "nullable": true,
             "description": "«был в сети N мин назад»"
           }
@@ -10205,7 +10225,8 @@
             "example": true
           },
           "lastSeenAt": {
-            "type": "object",
+            "type": "string",
+            "format": "date-time",
             "nullable": true
           }
         },
@@ -10356,35 +10377,35 @@
             "description": "Готовый текст с учётом группировки"
           },
           "postId": {
-            "type": "object",
+            "type": "number",
             "nullable": true,
             "example": 12
           },
           "commentId": {
-            "type": "object",
+            "type": "number",
             "nullable": true
           },
           "storyId": {
-            "type": "object",
+            "type": "number",
             "nullable": true
           },
           "noteId": {
-            "type": "object",
+            "type": "number",
             "nullable": true
           },
           "liveId": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "id эфира для LIVE_* — без него по уведомлению некуда перейти"
           },
           "requestId": {
-            "type": "object",
+            "type": "number",
             "nullable": true,
             "example": 42,
             "description": "id заявки в эфир (LIVE_JOIN_REQUEST). Именно его принимает POST /live/requests/{id}/accept | /decline"
           },
           "postThumbUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "Миниатюра поста (первое медиа) — картинка справа в строке уведомления"
           },
@@ -10483,7 +10504,7 @@
             "example": "Dushanbe"
           },
           "state": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "example": null
           },
@@ -10561,12 +10582,12 @@
             "example": "Dushanbe"
           },
           "state": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "example": "Sughd"
           },
           "zipCode": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "example": "734000"
           },
@@ -10575,12 +10596,12 @@
             "example": "Tajikistan"
           },
           "lat": {
-            "type": "object",
+            "type": "number",
             "nullable": true,
             "example": 38.5598
           },
           "lng": {
-            "type": "object",
+            "type": "number",
             "nullable": true,
             "example": 68.787
           }
@@ -10683,7 +10704,7 @@
             "description": "Использован ли бесплатный триал (даётся 1 раз)"
           },
           "daysLeft": {
-            "type": "object",
+            "type": "number",
             "nullable": true,
             "example": 6,
             "description": "Дней до конца триала/периода"
@@ -10837,7 +10858,7 @@
             "$ref": "#/components/schemas/UserBriefDto"
           },
           "title": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "status": {
@@ -10854,7 +10875,7 @@
             "type": "boolean"
           },
           "coverUrl": {
-            "type": "object",
+            "type": "string",
             "nullable": true
           },
           "viewersCount": {

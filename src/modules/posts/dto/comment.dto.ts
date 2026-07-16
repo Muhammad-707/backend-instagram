@@ -25,7 +25,7 @@ export class CommentDto {
   })
   author!: UserBriefDto;
 
-  @ApiPropertyOptional({ example: null, nullable: true, description: 'id родителя — для ответов' })
+  @ApiPropertyOptional({ type: Number, example: null, nullable: true, description: 'id родителя — для ответов' })
   parentId?: number | null;
 
   @ApiProperty({ example: 3 })

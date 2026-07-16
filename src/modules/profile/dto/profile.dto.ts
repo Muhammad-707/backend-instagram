@@ -108,22 +108,22 @@ export class ProfileDto {
   @ApiProperty({ example: 'Eraj Karimov' })
   fullName!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   avatarUrl?: string | null;
 
-  @ApiPropertyOptional({ nullable: true, maxLength: 150 })
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 150 })
   about?: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   website?: string | null;
 
   @ApiProperty({ enum: Gender, example: Gender.HIDDEN })
   gender!: Gender;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   occupation?: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true })
   dob?: Date | null;
 
   @ApiProperty({ example: false })
@@ -184,13 +184,13 @@ export class PostBriefDto {
   @ApiProperty({ example: 12 })
   id!: number;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   caption?: string | null;
 
   @ApiProperty({ example: false })
   isReel!: boolean;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Первое медиа — обложка в сетке' })
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'Первое медиа — обложка в сетке' })
   coverUrl?: string | null;
 
   @ApiProperty({ example: 24 })
@@ -213,7 +213,7 @@ export class MusicBriefDto {
   @ApiProperty({ example: 'The Weeknd' })
   artist!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   coverUrl?: string | null;
 
   @ApiProperty()
@@ -246,7 +246,7 @@ export class ActivityItemDto {
 }
 
 export class AvatarDto {
-  @ApiPropertyOptional({ nullable: true, description: 'null после удаления' })
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'null после удаления' })
   avatarUrl?: string | null;
 }
 
@@ -258,6 +258,7 @@ export class CollectionDto {
   postsCount!: number;
 
   @ApiPropertyOptional({
+    type: String,
     nullable: true,
     description: 'Превью последнего сохранённого поста (или явная обложка коллекции)',
   })

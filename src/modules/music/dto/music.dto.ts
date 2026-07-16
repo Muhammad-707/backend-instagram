@@ -39,7 +39,7 @@ export class MusicDto {
   @ApiProperty({ example: 218, description: 'Длительность в секундах (посчитана ffprobe)' })
   duration!: number;
 
-  @ApiPropertyOptional({ example: 'Lo-Fi', nullable: true })
+  @ApiPropertyOptional({ type: String, example: 'Lo-Fi', nullable: true })
   genre?: string | null;
 
   @ApiProperty({ example: false })

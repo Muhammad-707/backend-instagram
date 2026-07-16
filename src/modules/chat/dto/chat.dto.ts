@@ -134,31 +134,31 @@ export class MessageDto {
   @ApiProperty()
   senderId!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   text?: string | null;
 
   @ApiProperty({ enum: MsgType })
   type!: MsgType;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Фото/видео/голос/стикер' })
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'Фото/видео/голос/стикер' })
   mediaUrl?: string | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Секунды — для голосового/видео' })
+  @ApiPropertyOptional({ type: Number, nullable: true, description: 'Секунды — для голосового/видео' })
   duration?: number | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: Number, nullable: true })
   replyToId?: number | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'id отправленного поста' })
+  @ApiPropertyOptional({ type: Number, nullable: true, description: 'id отправленного поста' })
   sharedPostId?: number | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Превью заметки (переживает её смерть)' })
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'Превью заметки (переживает её смерть)' })
   noteSnapshot?: string | null;
 
   @ApiProperty({ type: [MessageReactionDto] })
   reactions!: MessageReactionDto[];
 
-  @ApiPropertyOptional({ nullable: true, description: 'Когда отредактировано' })
+  @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true, description: 'Когда отредактировано' })
   editedAt?: Date | null;
 
   @ApiProperty({ example: false })
@@ -178,7 +178,7 @@ export class ChatListItemDto {
   @ApiProperty({ type: UserBriefDto, description: 'Собеседник (для 1-на-1)' })
   peer!: UserBriefDto;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Никнейм собеседника в этом чате' })
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'Никнейм собеседника в этом чате' })
   peerNickname?: string | null;
 
   @ApiProperty({ example: 'default' })
@@ -190,7 +190,7 @@ export class ChatListItemDto {
   @ApiPropertyOptional({ type: MessageDto, nullable: true, description: 'Последнее сообщение' })
   lastMessage?: MessageDto | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true })
   lastMessageAt?: Date | null;
 
   @ApiProperty({ example: 3, description: 'Сколько непрочитанных' })
@@ -199,7 +199,7 @@ export class ChatListItemDto {
   @ApiProperty({ example: true, description: 'Собеседник онлайн' })
   isOnline!: boolean;
 
-  @ApiPropertyOptional({ nullable: true, description: '«был в сети N мин назад»' })
+  @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true, description: '«был в сети N мин назад»' })
   lastSeenAt?: Date | null;
 }
 
@@ -219,7 +219,7 @@ export class ChatDetailDto {
   @ApiProperty({ example: true })
   isOnline!: boolean;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true })
   lastSeenAt?: Date | null;
 }
 

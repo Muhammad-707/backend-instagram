@@ -48,7 +48,7 @@ export class UserBriefDto {
   @ApiProperty({ example: 'Eraj Karimov' })
   fullName!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   avatarUrl?: string | null;
 
   @ApiProperty({ example: false })

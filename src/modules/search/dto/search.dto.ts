@@ -31,7 +31,7 @@ export class LocationBriefDto {
   @ApiProperty({ example: 'Dushanbe' })
   city!: string;
 
-  @ApiPropertyOptional({ nullable: true, example: null })
+  @ApiPropertyOptional({ type: String, nullable: true, example: null })
   state?: string | null;
 
   @ApiProperty({ example: 'Tajikistan' })

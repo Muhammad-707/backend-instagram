@@ -13,10 +13,15 @@ export class AuthUserDto {
   @ApiProperty({ example: 'eraj@example.com' })
   email!: string;
 
-  @ApiPropertyOptional({ example: '+992901234567' })
+  @ApiPropertyOptional({ type: String, nullable: true, example: '+992901234567' })
   phone?: string | null;
 
-  @ApiPropertyOptional({ example: '2000-05-17T00:00:00.000Z' })
+  @ApiPropertyOptional({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    example: '2000-05-17T00:00:00.000Z',
+  })
   dob?: Date | null;
 
   @ApiProperty({ example: 'USER', enum: ['USER', 'ADMIN'] })
@@ -28,7 +33,7 @@ export class AuthUserDto {
   @ApiProperty({ example: false })
   isVerified!: boolean;
 
-  @ApiPropertyOptional({ description: 'Аватар из Profile', nullable: true })
+  @ApiPropertyOptional({ type: String, description: 'Аватар из Profile', nullable: true })
   avatarUrl?: string | null;
 }
 

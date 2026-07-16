@@ -83,10 +83,10 @@ export class StoryMusicDto {
   @ApiProperty()
   streamUrl!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   coverUrl?: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: Number, nullable: true })
   startSec?: number | null;
 }
 
@@ -100,7 +100,7 @@ export class StoryDto {
   @ApiProperty({ enum: MediaType, example: MediaType.IMAGE })
   mediaType!: MediaType;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   thumbUrl?: string | null;
 
   @ApiProperty({ example: 5, description: 'Секунд показа' })
@@ -109,16 +109,27 @@ export class StoryDto {
   @ApiPropertyOptional({ type: StoryMusicDto, nullable: true })
   music?: StoryMusicDto | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'overlays (JSON)' })
+  // Асимметрия чтения и записи, поэтому описана явно: в CreateStoryDto
+  // overlays — СТРОКА с JSON (multipart иначе не умеет), а здесь, на чтение,
+  // в БД лежит Json и наружу уходит уже РАЗОБРАННЫЙ массив объектов.
+  @ApiPropertyOptional({
+    type: 'array',
+    items: { type: 'object', additionalProperties: true },
+    nullable: true,
+    description:
+      'Разобранный JSON: текст/стикеры/эффекты. ВНИМАНИЕ: на запись (POST /stories) ' +
+      'это поле принимает СТРОКУ с JSON, а на чтение возвращается массивом.',
+    example: [{ type: 'text', value: 'Привет!', x: 0.5, y: 0.3 }],
+  })
   overlays?: unknown;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ type: String, nullable: true })
   filter?: string | null;
 
   @ApiProperty({ example: false })
   closeFriendsOnly!: boolean;
 
-  @ApiPropertyOptional({ nullable: true, description: 'id поста, если история — репост' })
+  @ApiPropertyOptional({ type: Number, nullable: true, description: 'id поста, если история — репост' })
   fromPostId?: number | null;
 
   @ApiProperty({ example: false, description: 'Смотрел ли Я — считается на СЕРВЕРЕ' })
@@ -176,7 +187,7 @@ export class StoryViewerDto {
   @ApiProperty({ example: false, description: 'Этот зритель лайкнул' })
   liked!: boolean;
 
-  @ApiPropertyOptional({ example: '❤️', nullable: true, description: 'Реакция зрителя, если была' })
+  @ApiPropertyOptional({ type: String, example: '❤️', nullable: true, description: 'Реакция зрителя, если была' })
   reaction?: string | null;
 
   @ApiProperty()
