@@ -101,18 +101,10 @@ function buildSchema(isProd: boolean): Joi.ObjectSchema<Record<string, unknown>>
     JWT_REFRESH_SECRET: requiredInProd(Joi.string().min(16), 'change_me_refresh_secret'),
     JWT_REFRESH_EXPIRES_IN: Joi.string().default('30d'),
 
-    // ---- S3 / MinIO ----
-    S3_ENDPOINT: requiredInProd(noLocalhost('S3_ENDPOINT'), 'localhost'),
-    S3_PORT: Joi.number().port().default(9000),
-    S3_USE_SSL: requiredInProd(Joi.string().valid('true', 'false'), 'false'),
-    S3_ACCESS_KEY: requiredInProd(Joi.string(), 'minioadmin'),
-    S3_SECRET_KEY: requiredInProd(Joi.string(), 'minioadmin'),
-    S3_BUCKET: Joi.string().default('instagram'),
-    // Домени публикӣ, ки аз он медиа ба браузер меравад (avatarUrl, media[].url ва ғ.).
-    S3_PUBLIC_URL: requiredInProd(
-      noLocalhost('S3_PUBLIC_URL').uri(),
-      'http://localhost:9000/instagram',
-    ),
+    // ---- Cloudinary ----
+    CLOUDINARY_CLOUD_NAME: requiredInProd(Joi.string(), 'your_cloud_name'),
+    CLOUDINARY_API_KEY: requiredInProd(Joi.string(), 'your_api_key'),
+    CLOUDINARY_API_SECRET: requiredInProd(Joi.string(), 'your_api_secret'),
 
     // ---- SMTP ----
     SMTP_HOST: requiredInProd(Joi.string(), 'localhost'),
