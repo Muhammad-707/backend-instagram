@@ -57,6 +57,7 @@ const STORY_SELECT = {
   overlays: true,
   filter: true,
   closeFriendsOnly: true,
+  saveToArchive: true,
   fromPostId: true,
   createdAt: true,
   expiresAt: true,
@@ -155,6 +156,7 @@ export class StoriesService {
             overlays: overlays ?? Prisma.DbNull,
             filter: dto.filter ?? null,
             closeFriendsOnly: dto.closeFriendsOnly ?? false,
+            saveToArchive: dto.saveToArchive ?? true,
             expiresAt,
           },
           select: { id: true },
@@ -204,6 +206,7 @@ export class StoriesService {
         duration: 5,
         overlays: overlays ?? Prisma.DbNull,
         closeFriendsOnly: dto.closeFriendsOnly ?? false,
+        saveToArchive: dto.saveToArchive ?? true,
         fromPostId: dto.fromPostId,
         expiresAt,
       },
@@ -308,9 +311,11 @@ export class StoriesService {
   }
 
   async archive(userId: string): Promise<StoryDto[]> {
-    // Свои истёкшие — те, что ещё физически лежат в БД (в актуальном или не успел удалить cron).
+    // Архив = свои истёкшие истории, у которых включён saveToArchive. Их не удаляют
+    // ни BullMQ-задача, ни cron — они лежат в БД навсегда (как «Архив историй» в IG),
+    // пока пользователь не удалит вручную. У saveToArchive=false архива нет: истекла — удалена.
     const rows = await this.prisma.story.findMany({
-      where: { userId, expiresAt: { lte: new Date() } },
+      where: { userId, expiresAt: { lte: new Date() }, saveToArchive: true },
       select: STORY_SELECT,
       orderBy: { createdAt: 'desc' },
     });
@@ -580,6 +585,7 @@ export class StoriesService {
       overlays: row.overlays ?? null,
       filter: row.filter,
       closeFriendsOnly: row.closeFriendsOnly,
+      saveToArchive: row.saveToArchive,
       fromPostId: row.fromPostId,
       isViewed,
       isLiked,

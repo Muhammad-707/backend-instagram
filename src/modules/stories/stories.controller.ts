@@ -64,6 +64,7 @@ export class StoriesController {
         overlays: { type: 'string', example: '[{"type":"text","value":"Привет!"}]' },
         filter: { type: 'string', example: 'clarendon' },
         closeFriendsOnly: { type: 'boolean', example: false },
+        saveToArchive: { type: 'boolean', example: true },
         fromPostId: { type: 'number', example: 12 },
       },
     },

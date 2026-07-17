@@ -206,6 +206,7 @@ export class HighlightsService {
         overlays: true,
         filter: true,
         closeFriendsOnly: true,
+        saveToArchive: true,
         fromPostId: true,
         createdAt: true,
         expiresAt: true,
@@ -243,6 +244,7 @@ export type HighlightStoryRow = Prisma.StoryGetPayload<{
     overlays: true;
     filter: true;
     closeFriendsOnly: true;
+    saveToArchive: true;
     fromPostId: true;
     createdAt: true;
     expiresAt: true;

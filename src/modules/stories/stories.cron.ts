@@ -24,6 +24,8 @@ export class StoriesCron {
         expiresAt: { lte: new Date() },
         // В актуальном — не трогаем.
         highlights: { none: {} },
+        // Включён архив — не трогаем: истёкшая история живёт в GET /stories/archive.
+        saveToArchive: false,
       },
       select: { id: true, mediaUrl: true, thumbUrl: true },
       take: 500,

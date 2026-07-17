@@ -30,6 +30,7 @@ export class StoriesProcessor extends WorkerHost {
         mediaUrl: true,
         thumbUrl: true,
         expiresAt: true,
+        saveToArchive: true,
         _count: { select: { highlights: true } },
       },
     });
@@ -40,6 +41,12 @@ export class StoriesProcessor extends WorkerHost {
     // В «Актуальном» — оставляем жить.
     if (story._count.highlights > 0) {
       this.logger.log(`История ${storyId} в актуальном — не удаляем`);
+      return;
+    }
+
+    // Включён архив — истёкшая история остаётся в БД (GET /stories/archive).
+    if (story.saveToArchive) {
+      this.logger.log(`История ${storyId} в архиве (saveToArchive) — не удаляем`);
       return;
     }
 

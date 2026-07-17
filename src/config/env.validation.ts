@@ -52,9 +52,8 @@ function buildSchema(isProd: boolean): Joi.ObjectSchema<Record<string, unknown>>
    */
   const PLACEHOLDERS = [
     /your[-_]/i,
-    /^dev_key/i,
-    /^devkey$/i,
-    /^devsecret$/i,
+    /^dev[-_]?key/i,
+    /^dev[-_]?secret/i,
     /change[-_]?me/i,
     /^<.*>$/,
   ];

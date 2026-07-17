@@ -17,11 +17,17 @@ import { SearchSpotifyDto, SpotifyTrackDto } from './dto/spotify.dto';
  * Spotify-специфичные роуты. Оставлены ради обратной совместимости, но вся
  * работа делегируется общему `OnlineMusicService`: каталог у нас теперь сменный.
  *
- * Для поиска музыки в приложении используйте `GET /music/online` — он ищет в
- * доступном каталоге (сейчас Deezer). Этот роут жёстко привязан к Spotify и
- * будет отвечать 503, пока `/search` Spotify возвращает
- * `403 Active premium subscription required for the owner of the app` —
- * это ограничение аккаунта владельца приложения, кодом не обходится.
+ * Поиск (`GET /spotify/search`) НЕ привязан к одному Spotify: он идёт через
+ * общий `OnlineMusicService.search()`, который берёт первый рабочий каталог
+ * (сейчас Deezer) и переключается на Spotify сам, как только у владельца
+ * приложения появится Premium и уйдёт `403 Active premium subscription
+ * required`. Так фронт, который зовёт /spotify/search, показывает музыку всегда.
+ *
+ * Чтобы save/unsave работали с любым каталогом, `spotifyId` в ответе — это
+ * составной id `PROVIDER:externalId` (например `DEEZER:3135556`). Фронт хранит
+ * его как непрозрачную строку и шлёт обратно; здесь мы разбираем провайдера,
+ * так что импорт идёт в правильный каталог. Голый id без префикса трактуется
+ * как Spotify — обратная совместимость со старыми клиентами.
  */
 @ApiBearerAuth()
 @ApiTags('spotify')
@@ -32,22 +38,40 @@ export class SpotifyController {
     private readonly music: MusicService,
   ) {}
 
+  /** `PROVIDER:externalId` → отдаём фронту как непрозрачный `spotifyId`. */
+  private encodeId(provider: MusicProvider, externalId: string): string {
+    return `${provider}:${externalId}`;
+  }
+
+  /** Разбор `spotifyId` обратно. Без префикса — легаси-Spotify id. */
+  private decodeId(id: string): { provider: MusicProvider; externalId: string } {
+    const idx = id.indexOf(':');
+    if (idx > 0) {
+      const prefix = id.slice(0, idx).toUpperCase();
+      if (prefix === MusicProvider.SPOTIFY || prefix === MusicProvider.DEEZER) {
+        return { provider: prefix as MusicProvider, externalId: id.slice(idx + 1) };
+      }
+    }
+    return { provider: MusicProvider.SPOTIFY, externalId: id };
+  }
+
   @Get('search')
   @ApiOperation({
-    summary: 'Поиск треков в Spotify (устарел — см. GET /music/online)',
+    summary: 'Поиск музыки (Deezer + Spotify)',
     description:
-      'Ищет ТОЛЬКО в Spotify. Пока у владельца Spotify-приложения нет Premium, отвечает 503. ' +
-      'Для поиска любой песни мира используйте /music/online — он работает без подписок.',
+      'Ищет песню в доступном каталоге: сначала Deezer (работает без подписок), ' +
+      'Spotify подключается сам, когда у владельца приложения появится Premium. ' +
+      'Поле spotifyId — составной id (PROVIDER:externalId), шлите его в save/unsave как есть.',
   })
   @ApiOkResponse({ type: [SpotifyTrackDto] })
   async search(
     @CurrentUser('id') userId: string,
     @Query() dto: SearchSpotifyDto,
   ): Promise<SpotifyTrackDto[]> {
-    const tracks = await this.online.searchIn(MusicProvider.SPOTIFY, dto.q, dto.limit);
+    const tracks = await this.online.search(dto.q, dto.limit);
     const saved = await this.online.savedMap(userId, tracks);
     return tracks.map((t) => ({
-      spotifyId: t.externalId,
+      spotifyId: this.encodeId(t.provider, t.externalId),
       title: t.title,
       artist: t.artist,
       albumCover: t.coverUrl || null,
@@ -70,7 +94,8 @@ export class SpotifyController {
     @CurrentUser('id') userId: string,
     @Param('spotifyId') spotifyId: string,
   ): Promise<MusicDto> {
-    const musicId = await this.online.ensureImported(MusicProvider.SPOTIFY, spotifyId);
+    const { provider, externalId } = this.decodeId(spotifyId);
+    const musicId = await this.online.ensureImported(provider, externalId);
     await this.music.save(userId, musicId);
     return this.music.byId(userId, musicId);
   }
@@ -83,7 +108,8 @@ export class SpotifyController {
     @CurrentUser('id') userId: string,
     @Param('spotifyId') spotifyId: string,
   ): Promise<SaveMusicDto> {
-    const musicId = await this.online.findImported(MusicProvider.SPOTIFY, spotifyId);
+    const { provider, externalId } = this.decodeId(spotifyId);
+    const musicId = await this.online.findImported(provider, externalId);
     return this.music.unsave(userId, musicId);
   }
 }

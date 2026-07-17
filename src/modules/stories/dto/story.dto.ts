@@ -69,6 +69,18 @@ export class CreateStoryDto {
   @IsBoolean()
   closeFriendsOnly?: boolean;
 
+  @ApiPropertyOptional({
+    example: true,
+    default: true,
+    description:
+      'Сохранять в архив после 24ч (как настройка IG «Сохранение в архив»). ' +
+      'true → истёкшая история остаётся в GET /stories/archive навсегда; false → удаляется.',
+  })
+  @IsOptional()
+  @Transform(toBool)
+  @IsBoolean()
+  saveToArchive?: boolean;
+
   @ApiPropertyOptional({ example: 12, description: 'Поделиться постом/reels в историю' })
   @IsOptional()
   @Type(() => Number)
@@ -133,6 +145,9 @@ export class StoryDto {
 
   @ApiProperty({ example: false })
   closeFriendsOnly!: boolean;
+
+  @ApiProperty({ example: true, description: 'Сохранится ли в архив после истечения 24ч' })
+  saveToArchive!: boolean;
 
   @ApiPropertyOptional({
     type: Number,
