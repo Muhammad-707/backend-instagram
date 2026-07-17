@@ -1,0 +1,6 @@
+# Скриптҳои shell ҳамеша бо LF — ҳатто дар Windows бо core.autocrlf=true.
+#
+# Сабаб: `docker-entrypoint.sh` дар Alpine иҷро мешавад. Агар clone онро бо
+# CRLF диҳад, шебанг ба `#!/bin/sh\r` табдил меёбад ва контейнер бо хатои
+# норавшани «no such file or directory» меафтад — дар ҳоле ки файл ҷои худаш аст.
+*.sh text eol=lf
