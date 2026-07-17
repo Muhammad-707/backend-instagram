@@ -27,11 +27,28 @@ export class MusicDto {
   @ApiProperty({ example: 'Coma-Media' })
   artist!: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
     example: 'http://localhost:3000/api/music/7/stream',
-    description: 'Ссылка на стриминг с поддержкой Range (перемотка)',
+    description:
+      'Наш стриминг с поддержкой Range (перемотка). Есть, только если mp3 лежит у нас. ' +
+      'У трека из внешнего каталога — null: полного файла нет, и этот роут ответил бы 404.',
   })
-  streamUrl!: string;
+  streamUrl?: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description: 'Что реально играет у внешнего трека — 30-сек превью каталога.',
+  })
+  previewUrl?: string | null;
+
+  @ApiProperty({
+    example: true,
+    description: 'true — играется целиком (наш mp3); false — только 30-сек превью',
+  })
+  isFullTrack!: boolean;
 
   @ApiProperty({ example: 'http://localhost:9000/instagram/covers/2026/07/abc.webp' })
   coverUrl!: string;

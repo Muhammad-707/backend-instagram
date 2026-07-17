@@ -36,8 +36,9 @@
     "calls:check": "ts-node scripts/calls-check.ts",
     "live:media": "ts-node -r dotenv/config scripts/live-media-check.ts",
     "turn:check": "ts-node -r dotenv/config scripts/turn-check.ts",
+    "online:check": "ts-node scripts/online-music-check.ts",
     "livekit:check": "ts-node scripts/livekit-check.ts",
-    "verify:all": "npm run lint && npm run build && npm run test && npm run test:e2e && npm run smoke && npm run contract:check && npm run socket:check && npm run live:check && npm run group:check && npm run notes:check && npm run calls:check && npm run live:media && npm run turn:check"
+    "verify:all": "npm run lint && npm run build && npm run test && npm run test:e2e && npm run smoke && npm run contract:check && npm run socket:check && npm run live:check && npm run group:check && npm run notes:check && npm run calls:check && npm run live:media && npm run turn:check && npm run online:check"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

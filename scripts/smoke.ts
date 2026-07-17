@@ -421,6 +421,35 @@ async function main(): Promise<void> {
   await call('GET', `/highlights/${hlId}`, { token: t1, route: '/highlights/{id}' });
   await call('PUT', `/highlights/${hlId}`, { token: t1, body: { title: 'Smoke2' }, route: '/highlights/{id}' });
 
+  // ── музикаи онлайн: «ҳар суруди дунё» ────────────────────────────────
+  await call('GET', '/music/online/providers', { token: t1, route: '/music/online/providers' });
+  const online = await call('GET', '/music/online?q=weeknd&limit=3', {
+    token: t1,
+    route: '/music/online',
+  });
+  const onlineTrack = online.data?.[0];
+  check(
+    'музикаи онлайн: ном, иҷрокунанда ва муқова меояд',
+    !!onlineTrack?.title && !!onlineTrack?.artist && !!onlineTrack?.coverUrl,
+    JSON.stringify(onlineTrack).slice(0, 160),
+  );
+  if (onlineTrack) {
+    const savedOnline = await call('POST', '/music/online/save', {
+      token: t1,
+      body: { provider: onlineTrack.provider, externalId: onlineTrack.externalId },
+      route: '/music/online/save',
+      expect: [201, 200],
+    });
+    check(
+      'треки берунӣ ростқавлона: isFullTrack=false ва streamUrl=null',
+      savedOnline.data?.isFullTrack === false && savedOnline.data?.streamUrl === null,
+      JSON.stringify({
+        isFullTrack: savedOnline.data?.isFullTrack,
+        streamUrl: savedOnline.data?.streamUrl,
+      }),
+    );
+  }
+
   // ── notes ─────────────────────────────────────────────────────────────
   const note = await call('POST', '/notes', { token: t1, body: { text: 'smoke note' } });
   const noteId: number = note.data?.id;

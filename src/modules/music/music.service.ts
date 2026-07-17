@@ -212,13 +212,23 @@ export class MusicService {
   }
 
   private toDto(row: MusicRow, saved: Set<number>): MusicDto {
+    // Есть ли у нас сам файл. `keyFromUrl` возвращает ключ, только если url
+    // указывает в наш S3 — это тот же вопрос, что задаёт /music/:id/stream перед
+    // отдачей, поэтому ответ не может разойтись с реальностью.
+    const isFullTrack = this.storage.keyFromUrl(row.url) !== null;
     return {
       id: row.id,
       title: row.title,
       artist: row.artist,
       // Клиенту отдаём НАШ streaming-endpoint, а не прямую ссылку в S3:
       // так работает Range, и мы сможем считать прослушивания.
-      streamUrl: `${this.appUrl}/api/music/${row.id}/stream`,
+      //
+      // Но только когда файл действительно наш: у трека из внешнего каталога
+      // (Deezer/Spotify) полного mp3 нет, и ссылка на стриминг вела бы в 404 —
+      // клиент нажал бы play и получил тишину. Ему отдаём превью и честный флаг.
+      streamUrl: isFullTrack ? `${this.appUrl}/api/music/${row.id}/stream` : null,
+      previewUrl: isFullTrack ? null : row.url,
+      isFullTrack,
       coverUrl: row.coverUrl,
       duration: row.duration,
       genre: row.genre,

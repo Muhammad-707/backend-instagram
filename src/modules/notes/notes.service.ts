@@ -12,7 +12,7 @@ import { ChatUtilService } from '../../common/chat/chat-util.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
 import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
-import { SpotifyService } from '../spotify/spotify.service';
+import { OnlineMusicService } from '../music/online/online-music.service';
 import { UserBriefDto } from '../users/dto/users.dto';
 import {
   CreateNoteDto,
@@ -49,7 +49,15 @@ const NOTE_SELECT = {
   expiresAt: true,
   user: { select: USER_BRIEF },
   music: {
-    select: { id: true, title: true, artist: true, coverUrl: true, url: true, spotifyId: true },
+    select: {
+      id: true,
+      title: true,
+      artist: true,
+      coverUrl: true,
+      url: true,
+      provider: true,
+      externalId: true,
+    },
   },
   _count: { select: { likes: true } },
 } satisfies Prisma.NoteSelect;
@@ -66,7 +74,7 @@ export class NotesService {
     private readonly access: AccessService,
     private readonly chat: ChatUtilService,
     private readonly events: EventEmitter2,
-    private readonly spotify: SpotifyService,
+    private readonly online: OnlineMusicService,
     private readonly storage: StorageService,
     config: ConfigService,
   ) {
@@ -331,9 +339,9 @@ export class NotesService {
   }
 
   /**
-   * Какой трек прикрепить: наш `musicId` или трек из Spotify по `spotifyId`
-   * (импортируем — с обложкой и названием). Отправить и «сохранить себе» —
-   * разные намерения, поэтому в SavedMusic ничего не кладём.
+   * Какой трек прикрепить: наш `musicId` или трек из каталога по
+   * `provider`+`externalId` (импортируем — с обложкой и названием). Поставить
+   * трек и «сохранить себе» — разные намерения, поэтому в SavedMusic ничего не кладём.
    */
   private async resolveMusicId(dto: CreateNoteDto): Promise<number | null> {
     if (dto.musicId) {
@@ -344,7 +352,14 @@ export class NotesService {
       if (!row) throw new NotFoundException('Трек не найден');
       return row.id;
     }
-    if (dto.spotifyId) return this.spotify.ensureImported(dto.spotifyId);
+    if (dto.externalId) {
+      if (!dto.provider) {
+        throw new BadRequestException(
+          'externalId без provider — непонятно, из какого каталога трек',
+        );
+      }
+      return this.online.ensureImported(dto.provider, dto.externalId);
+    }
     return null;
   }
 
@@ -363,7 +378,8 @@ export class NotesService {
       streamUrl: isFullTrack ? `${this.appUrl}/api/music/${m.id}/stream` : null,
       previewUrl: m.url,
       coverUrl: m.coverUrl,
-      spotifyId: m.spotifyId,
+      provider: m.provider,
+      externalId: m.externalId,
       isFullTrack,
     };
   }

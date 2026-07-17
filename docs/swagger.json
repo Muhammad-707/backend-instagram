@@ -2231,6 +2231,138 @@
         ]
       }
     },
+    "/api/music/online/providers": {
+      "get": {
+        "operationId": "OnlineMusicController_providers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnlineProvidersDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Какие каталоги музыки сейчас доступны",
+        "tags": [
+          "music"
+        ]
+      }
+    },
+    "/api/music/online": {
+      "get": {
+        "description": "Название/исполнитель → название, исполнитель, обложка, длительность и 30-сек превью. Полного трека внешние каталоги не отдают. `musicId` заполнен, если трек уже импортирован.",
+        "operationId": "OnlineMusicController_search",
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "description": "Название или исполнитель",
+            "schema": {
+              "example": "weeknd blinding lights",
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20,
+              "example": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "provider",
+            "required": false,
+            "in": "query",
+            "description": "Искать в конкретном каталоге. По умолчанию — в первом доступном.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "SPOTIFY",
+                "DEEZER"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OnlineTrackDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Поиск любой песни во внешнем каталоге",
+        "tags": [
+          "music"
+        ]
+      }
+    },
+    "/api/music/online/save": {
+      "post": {
+        "description": "Идемпотентно: повторный импорт того же трека не создаёт дубликат.",
+        "operationId": "OnlineMusicController_save",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveOnlineTrackDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MusicDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Импортировать трек из каталога и сохранить себе",
+        "tags": [
+          "music"
+        ]
+      }
+    },
     "/api/music": {
       "get": {
         "operationId": "MusicController_search",
@@ -2485,7 +2617,7 @@
     },
     "/api/spotify/search": {
       "get": {
-        "description": "Название/исполнитель → название, артист, обложка альбома, превью. + isSaved.",
+        "description": "Ищет ТОЛЬКО в Spotify. Пока у владельца Spotify-приложения нет Premium, отвечает 503. Для поиска любой песни мира используйте /music/online — он работает без подписок.",
         "operationId": "SpotifyController_search",
         "parameters": [
           {
@@ -2534,7 +2666,7 @@
             "bearer": []
           }
         ],
-        "summary": "Поиск треков в Spotify",
+        "summary": "Поиск треков в Spotify (устарел — см. GET /music/online)",
         "tags": [
           "spotify"
         ]
@@ -2542,7 +2674,7 @@
     },
     "/api/spotify/tracks/{spotifyId}/save": {
       "post": {
-        "description": "Импортирует трек в вашу музыку (дедуп по spotifyId) и помечает сохранённым. Дальше он доступен как обычный трек: в /profile/me/saved-music, в постах и историях.",
+        "description": "Импортирует трек в вашу музыку (дедуп по provider+externalId) и помечает сохранённым. Дальше он доступен как обычный трек: в /profile/me/saved-music, в постах и историях.",
         "operationId": "SpotifyController_save",
         "parameters": [
           {
@@ -9252,6 +9384,115 @@
           "addedAt"
         ]
       },
+      "OnlineProvidersDto": {
+        "type": "object",
+        "properties": {
+          "providers": {
+            "type": "array",
+            "example": [
+              "DEEZER"
+            ],
+            "description": "Каталоги, которые реально доступны сейчас. Spotify появится здесь, только когда его /search перестанет отвечать 403 (нужна Premium-подписка у владельца приложения).",
+            "items": {
+              "type": "string",
+              "enum": [
+                "SPOTIFY",
+                "DEEZER"
+              ]
+            }
+          }
+        },
+        "required": [
+          "providers"
+        ]
+      },
+      "OnlineTrackDto": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "SPOTIFY",
+              "DEEZER"
+            ],
+            "example": "DEEZER"
+          },
+          "externalId": {
+            "type": "string",
+            "example": "908604612",
+            "description": "id трека в каталоге провайдера"
+          },
+          "title": {
+            "type": "string",
+            "example": "Blinding Lights"
+          },
+          "artist": {
+            "type": "string",
+            "example": "The Weeknd"
+          },
+          "coverUrl": {
+            "type": "string",
+            "example": "https://.../cover.jpg",
+            "description": "Обложка альбома"
+          },
+          "duration": {
+            "type": "number",
+            "example": 200,
+            "description": "Длительность трека, сек"
+          },
+          "previewUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "30-сек превью (mp3). Полного трека внешние каталоги не отдают — ни Spotify, ни Deezer. null — каталог не дал даже превью."
+          },
+          "pageUrl": {
+            "type": "string",
+            "example": "https://www.deezer.com/track/908604612"
+          },
+          "musicId": {
+            "type": "number",
+            "nullable": true,
+            "description": "Наш Music.id, если трек уже импортирован. null — ещё не импортирован."
+          },
+          "isSaved": {
+            "type": "boolean",
+            "example": false,
+            "description": "Уже в моих сохранённых"
+          }
+        },
+        "required": [
+          "provider",
+          "externalId",
+          "title",
+          "artist",
+          "coverUrl",
+          "duration",
+          "pageUrl",
+          "isSaved"
+        ]
+      },
+      "SaveOnlineTrackDto": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "SPOTIFY",
+              "DEEZER"
+            ],
+            "example": "DEEZER"
+          },
+          "externalId": {
+            "type": "string",
+            "example": "908604612",
+            "description": "id трека в каталоге провайдера"
+          }
+        },
+        "required": [
+          "provider",
+          "externalId"
+        ]
+      },
       "MusicDto": {
         "type": "object",
         "properties": {
@@ -9269,8 +9510,19 @@
           },
           "streamUrl": {
             "type": "string",
+            "nullable": true,
             "example": "http://localhost:3000/api/music/7/stream",
-            "description": "Ссылка на стриминг с поддержкой Range (перемотка)"
+            "description": "Наш стриминг с поддержкой Range (перемотка). Есть, только если mp3 лежит у нас. У трека из внешнего каталога — null: полного файла нет, и этот роут ответил бы 404."
+          },
+          "previewUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Что реально играет у внешнего трека — 30-сек превью каталога."
+          },
+          "isFullTrack": {
+            "type": "boolean",
+            "example": true,
+            "description": "true — играется целиком (наш mp3); false — только 30-сек превью"
           },
           "coverUrl": {
             "type": "string",
@@ -9305,7 +9557,7 @@
           "id",
           "title",
           "artist",
-          "streamUrl",
+          "isFullTrack",
           "coverUrl",
           "duration",
           "isTrending",
@@ -10247,9 +10499,19 @@
             "nullable": true,
             "description": "Обложка альбома"
           },
-          "spotifyId": {
+          "provider": {
             "type": "string",
-            "nullable": true
+            "enum": [
+              "SPOTIFY",
+              "DEEZER"
+            ],
+            "nullable": true,
+            "description": "Каталог, откуда трек. null — наш локальный mp3"
+          },
+          "externalId": {
+            "type": "string",
+            "nullable": true,
+            "description": "id трека в каталоге"
           },
           "isFullTrack": {
             "type": "boolean",
@@ -10354,10 +10616,18 @@
             "example": 35,
             "description": "Трек из нашей библиотеки"
           },
-          "spotifyId": {
+          "provider": {
             "type": "string",
-            "example": "11dFghVXANMlKmJXsNCbNl",
-            "description": "Трек прямо из Spotify (id из /spotify/search) — импортируем в Music и прикрепим вместе с обложкой и названием. Не добавляет трек в «сохранённые»."
+            "enum": [
+              "SPOTIFY",
+              "DEEZER"
+            ],
+            "description": "Каталог найденного трека (из /music/online). Идёт в паре с externalId."
+          },
+          "externalId": {
+            "type": "string",
+            "example": "908604612",
+            "description": "id трека в каталоге (из /music/online) — импортируем в Music и прикрепим вместе с обложкой и названием. Не добавляет трек в «сохранённые»."
           },
           "bgColor": {
             "type": "string",
@@ -10904,10 +11174,19 @@
             "nullable": true,
             "description": "Что реально играет: для локального трека — наш mp3, для Spotify — 30-сек preview (а если Spotify не дал preview — ссылка на Spotify, играть её нельзя)."
           },
-          "spotifyId": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "SPOTIFY",
+              "DEEZER"
+            ],
+            "nullable": true,
+            "description": "Каталог, откуда трек. null — наш локальный mp3"
+          },
+          "externalId": {
             "type": "string",
             "nullable": true,
-            "description": "id в Spotify, если оттуда"
+            "description": "id трека в каталоге"
           },
           "isFullTrack": {
             "type": "boolean",

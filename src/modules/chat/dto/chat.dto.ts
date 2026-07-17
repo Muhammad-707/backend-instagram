@@ -1,10 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { CallStatus, CallType, MsgType } from '@prisma/client';
+import { CallStatus, CallType, MsgType, MusicProvider } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -110,14 +111,22 @@ export class SendMessageDto {
   musicId?: number;
 
   @ApiPropertyOptional({
+    enum: MusicProvider,
+    description: 'Каталог найденного трека (из /music/online). Идёт в паре с externalId.',
+  })
+  @IsOptional()
+  @IsEnum(MusicProvider)
+  provider?: MusicProvider;
+
+  @ApiPropertyOptional({
     description:
-      'Отправить трек прямо из Spotify по его id — импортируем в Music и прикрепим. ' +
+      'id трека в каталоге (из /music/online) — импортируем в Music и прикрепим. ' +
       'Не добавляет трек в «сохранённые»: поделиться и сохранить — разные действия.',
-    example: '11dFghVXANMlKmJXsNCbNl',
+    example: '908604612',
   })
   @IsOptional()
   @IsString()
-  spotifyId?: string;
+  externalId?: string;
 }
 
 /** Звонок внутри сообщения (type=CALL) — «Аудиозвонок, 5:32» / «Пропущенный». */
@@ -170,8 +179,15 @@ export class MessageMusicDto {
   })
   previewUrl?: string | null;
 
-  @ApiPropertyOptional({ type: String, nullable: true, description: 'id в Spotify, если оттуда' })
-  spotifyId?: string | null;
+  @ApiPropertyOptional({
+    enum: MusicProvider,
+    nullable: true,
+    description: 'Каталог, откуда трек. null — наш локальный mp3',
+  })
+  provider?: MusicProvider | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'id трека в каталоге' })
+  externalId?: string | null;
 
   @ApiProperty({
     example: true,

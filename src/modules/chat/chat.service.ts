@@ -13,7 +13,7 @@ import {
   RequestStatus,
   ReportTargetType,
 } from '@prisma/client';
-import { SpotifyService } from '../spotify/spotify.service';
+import { OnlineMusicService } from '../music/online/online-music.service';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
 import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
@@ -77,7 +77,8 @@ const MESSAGE_SELECT = {
       coverUrl: true,
       duration: true,
       url: true,
-      spotifyId: true,
+      provider: true,
+      externalId: true,
     },
   },
   // Строка о звонке (type=CALL) — тип/статус/длительность берём из самого
@@ -114,7 +115,7 @@ export class ChatService {
     private readonly validator: FileValidator,
     private readonly presence: PresenceService,
     private readonly realtime: RealtimeService,
-    private readonly spotify: SpotifyService,
+    private readonly online: OnlineMusicService,
     private readonly config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -562,7 +563,7 @@ export class ChatService {
       mediaUrl = dto.stickerUrl;
     } else if (dto.sharedPostId) {
       type = MsgType.POST_SHARE;
-    } else if (dto.musicId || dto.spotifyId) {
+    } else if (dto.musicId || dto.externalId) {
       type = MsgType.MUSIC_SHARE;
       musicId = await this.resolveMusicId(dto);
     } else if (!dto.text?.trim()) {
@@ -605,10 +606,10 @@ export class ChatService {
   /**
    * Какой Music.id прикрепить к сообщению.
    *
-   * `musicId` — трек уже в нашей библиотеке. `spotifyId` — трека у нас может не
-   * быть: тащим его из Spotify (upsert, повтор не плодит строки). Импорт НЕ
-   * добавляет трек в «сохранённые» отправителя — поделиться и сохранить это
-   * разные вещи.
+   * `musicId` — трек уже в нашей библиотеке. `provider`+`externalId` — трек
+   * найден в каталоге (/music/online) и у нас его может не быть: импортируем
+   * (upsert, повтор не плодит строки). Импорт НЕ добавляет трек в «сохранённые»
+   * отправителя — поделиться и сохранить это разные вещи.
    */
   private async resolveMusicId(dto: SendMessageDto): Promise<number> {
     if (dto.musicId) {
@@ -619,7 +620,10 @@ export class ChatService {
       if (!row) throw new NotFoundException('Трек не найден');
       return row.id;
     }
-    return this.spotify.ensureImported(dto.spotifyId as string);
+    if (!dto.provider) {
+      throw new BadRequestException('externalId без provider — непонятно, из какого каталога трек');
+    }
+    return this.online.ensureImported(dto.provider, dto.externalId as string);
   }
 
   /** Редактировать можно ≤15 минут и только своё. */
@@ -1223,7 +1227,8 @@ export class ChatService {
       duration: m.duration,
       streamUrl: isFullTrack ? `${this.appUrl}/api/music/${m.id}/stream` : null,
       previewUrl: m.url,
-      spotifyId: m.spotifyId,
+      provider: m.provider,
+      externalId: m.externalId,
       isFullTrack,
     };
   }

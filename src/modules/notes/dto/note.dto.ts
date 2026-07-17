@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { NoteAudience } from '@prisma/client';
+import { MusicProvider, NoteAudience } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsEnum,
@@ -28,14 +28,22 @@ export class CreateNoteDto {
   musicId?: number;
 
   @ApiPropertyOptional({
-    example: '11dFghVXANMlKmJXsNCbNl',
+    enum: MusicProvider,
+    description: 'Каталог найденного трека (из /music/online). Идёт в паре с externalId.',
+  })
+  @IsOptional()
+  @IsEnum(MusicProvider)
+  provider?: MusicProvider;
+
+  @ApiPropertyOptional({
+    example: '908604612',
     description:
-      'Трек прямо из Spotify (id из /spotify/search) — импортируем в Music и прикрепим ' +
+      'id трека в каталоге (из /music/online) — импортируем в Music и прикрепим ' +
       'вместе с обложкой и названием. Не добавляет трек в «сохранённые».',
   })
   @IsOptional()
   @IsString()
-  spotifyId?: string;
+  externalId?: string;
 
   @ApiPropertyOptional({ example: '#FFB6C1', description: 'Цвет фона заметки (hex)' })
   @IsOptional()
@@ -111,8 +119,15 @@ export class NoteMusicDto {
   @ApiPropertyOptional({ type: String, nullable: true, description: 'Обложка альбома' })
   coverUrl?: string | null;
 
-  @ApiPropertyOptional({ type: String, nullable: true })
-  spotifyId?: string | null;
+  @ApiPropertyOptional({
+    enum: MusicProvider,
+    nullable: true,
+    description: 'Каталог, откуда трек. null — наш локальный mp3',
+  })
+  provider?: MusicProvider | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'id трека в каталоге' })
+  externalId?: string | null;
 
   @ApiProperty({ example: true, description: 'true — играется целиком; false — только превью' })
   isFullTrack!: boolean;

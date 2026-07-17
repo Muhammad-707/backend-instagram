@@ -139,6 +139,13 @@ enum ReportTargetType {
   CHAT
 }
 
+/// Откуда пришёл трек. LOCAL — наш mp3 из assets/ (играет целиком),
+/// остальные — внешние каталоги: у них есть только 30-сек превью.
+enum MusicProvider {
+  SPOTIFY
+  DEEZER
+}
+
 enum LiveStatus {
   LIVE
   ENDED
@@ -435,19 +442,24 @@ model PostMedia {
 }
 
 model Music {
-  id         Int      @id @default(autoincrement())
+  id         Int            @id @default(autoincrement())
   title      String
   artist     String
   url        String
   coverUrl   String
   duration   Int
   genre      String?
-  isTrending Boolean  @default(false)
-  usesCount  Int      @default(0)
-  // Если трек пришёл из Spotify — его id там (для дедупликации при импорте).
-  // null → локальный трек (загруженный mp3 из assets/).
-  spotifyId  String?  @unique
-  createdAt  DateTime @default(now())
+  isTrending Boolean        @default(false)
+  usesCount  Int            @default(0)
+  // Откуда трек и его id ТАМ — для дедупликации при импорте.
+  // Оба null → наш локальный mp3 из assets/.
+  //
+  // Раньше здесь был `spotifyId`, но Spotify оказался не единственным (и не
+  // рабочим) источником: его /search требует Premium у владельца приложения.
+  // Каталог теперь может быть любым, поэтому пара provider+externalId.
+  provider   MusicProvider?
+  externalId String?
+  createdAt  DateTime       @default(now())
 
   posts    Post[]
   stories  Story[]
@@ -455,6 +467,7 @@ model Music {
   savedBy  SavedMusic[]
   messages Message[]    @relation("MusicOfMessage")
 
+  @@unique([provider, externalId])
   @@index([title])
   @@index([artist])
   @@index([isTrending])
