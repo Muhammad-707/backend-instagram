@@ -74,6 +74,37 @@ services:
       - '7881:7881'
       - '7882:7882/udp'
 
+  # TURN-сервер для звонков 1-на-1 (WebRTC p2p).
+  #
+  # Зачем он вообще: STUN лишь подсказывает абоненту его внешний адрес. Если оба
+  # за симметричным NAT (обычный мобильный интернет), прямой канал не построится
+  # ни при каком STUN — трафик должен кто-то ретранслировать, и это TURN.
+  # Без него звонок «работает на Wi-Fi и не работает с телефона» — самый
+  # неприятный класс багов: воспроизводится не у всех и не всегда.
+  #
+  # Эфиры (Live) идут через LiveKit — там свой ретранслятор (SFU), TURN не нужен.
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    container_name: ig_coturn
+    restart: unless-stopped
+    # --lt-cred-mech — длительные учётки (username/password), их же отдаёт
+    # GET /chats/calls/ice-servers. --fingerprint обязателен для WebRTC.
+    command: >
+      -n --log-file=stdout
+      --lt-cred-mech --fingerprint
+      --realm=${TURN_REALM:-instagram.local}
+      --user=${TURN_USERNAME:-igturn}:${TURN_PASSWORD:-igturnpass}
+      --listening-port=3478
+      --min-port=49160 --max-port=49200
+      --no-tls --no-dtls
+      --external-ip=${TURN_EXTERNAL_IP:-$$(detect-external-ip)}
+    ports:
+      - '3478:3478'
+      - '3478:3478/udp'
+      # Диапазон релеев узкий намеренно: каждый порт публикуется отдельно, а
+      # дефолтные 49152–65535 подняли бы 16 тысяч правил и docker бы задохнулся.
+      - '49160-49200:49160-49200/udp'
+
   api:
     build:
       context: .
