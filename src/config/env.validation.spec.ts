@@ -64,6 +64,29 @@ describe('validateEnv', () => {
       );
     });
 
+    // Регресс аз проди воқеӣ (2026-07-17): он ҷо `wss://your-livekit-url.com` истода буд.
+    // Он аз ҳар ду тафтиши мавҷуда мегузашт (wss + localhost нест), домен вуҷуд надошт,
+    // барнома бехато мебархост ва токен медод — вале камера ва садо дар эфир кор
+    // намекарданд, чунки браузер ба LiveKit пайваст шуда наметавонист.
+    it('LIVEKIT_URL-и қолабӣ дар прод рад мешавад, гарчи wss ва localhost набошад', () => {
+      expect(() =>
+        validateEnv({ ...validProd, LIVEKIT_URL: 'wss://your-livekit-url.com' }),
+      ).toThrow(/LIVEKIT_URL/);
+    });
+
+    it('калидҳои қолабӣ/dev дар прод рад мешаванд — бо онҳо токени эфирро ҷаъл кардан мумкин', () => {
+      expect(() => validateEnv({ ...validProd, LIVEKIT_API_KEY: 'dev_key_123' })).toThrow(
+        /LIVEKIT_API_KEY/,
+      );
+      expect(() => validateEnv({ ...validProd, LIVEKIT_API_SECRET: 'devsecret' })).toThrow(
+        /LIVEKIT_API_SECRET/,
+      );
+    });
+
+    it('қимати солими LiveKit ҳамоно мегузарад', () => {
+      expect(() => validateEnv(validProd)).not.toThrow();
+    });
+
     // Регресс: isProd дар сатҳи модул ҳисоб мешуд, аз process.env ҳангоми import.
     // NODE_ENV аз .env меомад ва ҳанӯз дар process.env набуд → валидатор дар прод
     // хомӯшона ба режими dev меафтод, яъне маҳз ҳамон баге, ки бояд пешгирӣ шавад.

@@ -38,6 +38,40 @@ function buildSchema(isProd: boolean): Joi.ObjectSchema<Record<string, unknown>>
           'Суроғаи публикии сервисро нависед.',
       });
 
+  /**
+   * Қиматҳои қолабӣ («ҷойнишин») дар прод хатоанд.
+   *
+   * Сабаб аз таҷрибаи воқеӣ: дар прод `LIVEKIT_URL=wss://your-livekit-url.com`
+   * истода буд. Он аз ҳар ду тафтиши мавҷуда мегузашт — ҳам `wss`, ҳам
+   * `localhost` нест — вале чунин домен вуҷуд надорад. Барнома бехато
+   * бармехост, эфир «сар мешуд» ва токен медод, аммо браузер ба LiveKit
+   * пайваст шуда наметавонист: камера ва садо кор намекарданд, бе ягон хато.
+   *
+   * `devkey`/`devsecret` дефолтҳои dev-анд: дар прод бо онҳо ҳар кас метавонад
+   * токени эфир ҷаъл кунад.
+   */
+  const PLACEHOLDERS = [
+    /your[-_]/i,
+    /^dev_key/i,
+    /^devkey$/i,
+    /^devsecret$/i,
+    /change[-_]?me/i,
+    /^<.*>$/,
+  ];
+  const noPlaceholder = (label: string) =>
+    Joi.string()
+      .custom((value: string, helpers) => {
+        if (isProd && PLACEHOLDERS.some((re) => re.test(value))) {
+          return helpers.error('env.placeholder');
+        }
+        return value;
+      }, 'no-placeholder-in-production')
+      .messages({
+        'env.placeholder':
+          `"${label}" қимати қолабӣ дорад, вале NODE_ENV=production. ` +
+          'Қимати воқеиро нависед — вагарна барнома бехато бармехезад, аммо кор намекунад.',
+      });
+
   /** Дар прод ҳатмӣ, дар dev — дефолти маҳаллӣ. */
   const requiredInProd = <T extends Joi.Schema>(schema: T, devDefault: string | number): T =>
     (isProd ? schema.required() : schema.default(devDefault)) as T;
@@ -91,11 +125,13 @@ function buildSchema(isProd: boolean): Joi.ObjectSchema<Record<string, unknown>>
     // ---- LiveKit ----
     // Браузер аз https танҳо wss:// -ро иҷозат медиҳад — ws:// дар прод манъ.
     LIVEKIT_URL: requiredInProd(
-      noLocalhost('LIVEKIT_URL').uri({ scheme: isProd ? ['wss'] : ['ws', 'wss'] }),
+      noLocalhost('LIVEKIT_URL')
+        .concat(noPlaceholder('LIVEKIT_URL'))
+        .uri({ scheme: isProd ? ['wss'] : ['ws', 'wss'] }),
       'ws://localhost:7880',
     ),
-    LIVEKIT_API_KEY: requiredInProd(Joi.string(), 'devkey'),
-    LIVEKIT_API_SECRET: requiredInProd(Joi.string(), 'devsecret'),
+    LIVEKIT_API_KEY: requiredInProd(noPlaceholder('LIVEKIT_API_KEY'), 'devkey'),
+    LIVEKIT_API_SECRET: requiredInProd(noPlaceholder('LIVEKIT_API_SECRET'), 'devsecret'),
 
     // ---- Spotify (ихтиёрӣ: набошад, модул хомӯш) ----
     SPOTIFY_CLIENT_ID: Joi.string().allow('').default(''),
