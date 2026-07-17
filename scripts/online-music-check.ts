@@ -11,7 +11,7 @@
  *
  * Запуск: npm run online:check   (API должен быть поднят, нужен интернет)
  */
-import { registerUser, req } from './lib/verify-http';
+import { BASE, registerUser, req } from './lib/verify-http';
 
 let passed = 0;
 let failed = 0;
@@ -143,6 +143,50 @@ async function main(): Promise<void> {
     'MusicDto-и треки берунӣ streamUrl НАМЕДИҲАД (он 404 медод)',
     savedDto?.isFullTrack === false && savedDto?.streamUrl === null && !!savedDto?.previewUrl,
     JSON.stringify({ isFullTrack: savedDto?.isFullTrack, streamUrl: savedDto?.streamUrl }),
+  );
+
+  // ── ба ПОСТ ва ИСТОРИЯ гузоштан (маҳз он чи корбар мехоҳад)
+  const sharp = (await import('sharp')).default;
+  const jpeg = await sharp({
+    create: { width: 64, height: 64, channels: 3, background: { r: 30, g: 90, b: 200 } },
+  })
+    .jpeg()
+    .toBuffer();
+
+  const postForm = new FormData();
+  postForm.append('media', new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' }), 'p.jpg');
+  postForm.append('caption', 'Бо музика 🎵');
+  postForm.append('provider', hit.provider);
+  postForm.append('externalId', hit.externalId);
+  const postRes = await fetch(`${BASE}/posts`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${a.token}` },
+    body: postForm,
+  });
+  const postJson: any = await postRes.json().catch(() => null);
+  check('трек ба ПОСТ гузошта шуд', postRes.status === 201 && !!postJson?.data?.music, JSON.stringify(postJson).slice(0, 200));
+  check(
+    'дар пост ном/муқова ҳаст ва isFullTrack=false',
+    postJson?.data?.music?.title === hit.title && postJson?.data?.music?.isFullTrack === false,
+    JSON.stringify(postJson?.data?.music),
+  );
+
+  const storyForm = new FormData();
+  storyForm.append('media', new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' }), 's.jpg');
+  storyForm.append('provider', hit.provider);
+  storyForm.append('externalId', hit.externalId);
+  const storyRes = await fetch(`${BASE}/stories`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${a.token}` },
+    body: storyForm,
+  });
+  const storyJson: any = await storyRes.json().catch(() => null);
+  const st = Array.isArray(storyJson?.data) ? storyJson.data[0] : storyJson?.data;
+  check('трек ба ИСТОРИЯ гузошта шуд', storyRes.status === 201 && !!st?.music, JSON.stringify(storyJson).slice(0, 200));
+  check(
+    'дар история ном/муқова ҳаст ва isFullTrack=false',
+    st?.music?.title === hit.title && st?.music?.isFullTrack === false,
+    JSON.stringify(st?.music),
   );
 
   // ── треки маҳаллӣ ҳанӯз ПУРРА

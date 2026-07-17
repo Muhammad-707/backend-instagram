@@ -1,9 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { MediaType } from '@prisma/client';
+import { MediaType, MusicProvider } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -12,6 +13,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { CursorDto } from '../../../common/pagination/cursor.dto';
+import { AttachedMusicDto } from '../../music/attached-music.service';
 import { UserBriefDto } from '../../users/dto/users.dto';
 
 export const CAPTION_MAX = 2200;
@@ -45,6 +47,22 @@ export class CreatePostDto {
   @Type(() => Number)
   @IsInt()
   musicId?: number;
+
+  @ApiPropertyOptional({
+    enum: MusicProvider,
+    description: 'Каталог трека, найденного через GET /music/online. В паре с externalId.',
+  })
+  @IsOptional()
+  @IsEnum(MusicProvider)
+  provider?: MusicProvider;
+
+  @ApiPropertyOptional({
+    example: '908604612',
+    description: 'id трека в каталоге — импортируем и прикрепим к посту.',
+  })
+  @IsOptional()
+  @IsString()
+  externalId?: string;
 
   @ApiPropertyOptional({ type: [String], description: 'id отмеченных пользователей' })
   @IsOptional()
@@ -154,23 +172,6 @@ export class PostLocationDto {
   country!: string;
 }
 
-export class PostMusicDto {
-  @ApiProperty({ example: 35 })
-  id!: number;
-
-  @ApiProperty({ example: 'Soundhelix song 1' })
-  title!: string;
-
-  @ApiProperty({ example: 'SoundHelix' })
-  artist!: string;
-
-  @ApiProperty({ example: 'http://localhost:3000/api/music/35/stream' })
-  streamUrl!: string;
-
-  @ApiProperty({ example: 'http://localhost:9000/instagram/music/covers/x.webp' })
-  coverUrl!: string;
-}
-
 export class PostDto {
   @ApiProperty({ example: 12 })
   id!: number;
@@ -193,8 +194,8 @@ export class PostDto {
   @ApiPropertyOptional({ type: PostLocationDto, nullable: true })
   location?: PostLocationDto | null;
 
-  @ApiPropertyOptional({ type: PostMusicDto, nullable: true })
-  music?: PostMusicDto | null;
+  @ApiPropertyOptional({ type: AttachedMusicDto, nullable: true })
+  music?: AttachedMusicDto | null;
 
   @ApiProperty({ type: [UserBriefDto], description: 'Отмеченные на фото' })
   taggedUsers!: UserBriefDto[];

@@ -5,10 +5,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { FollowStatus, MediaType, NotifType, Prisma, ReportTargetType } from '@prisma/client';
+import {
+  FollowStatus,
+  MediaType,
+  MusicProvider,
+  NotifType,
+  Prisma,
+  ReportTargetType,
+} from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
+import { AttachedMusicService } from '../music/attached-music.service';
+import { OnlineMusicService } from '../music/online/online-music.service';
 import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
 import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -53,7 +62,17 @@ const POST_SELECT = {
   user: { select: USER_BRIEF },
   media: { orderBy: { order: 'asc' } },
   location: { select: { id: true, city: true, country: true } },
-  music: { select: { id: true, title: true, artist: true, coverUrl: true } },
+  music: {
+    select: {
+      id: true,
+      title: true,
+      artist: true,
+      coverUrl: true,
+      url: true,
+      provider: true,
+      externalId: true,
+    },
+  },
   taggedUsers: { select: { user: { select: USER_BRIEF } } },
   hashtags: { select: { hashtag: { select: { name: true } } } },
   _count: { select: { likes: true, comments: true, views: true } },
@@ -73,6 +92,8 @@ export class PostsService {
     private readonly validator: FileValidator,
     private readonly chat: ChatUtilService,
     private readonly events: EventEmitter2,
+    private readonly online: OnlineMusicService,
+    private readonly attachedMusic: AttachedMusicService,
     config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -126,12 +147,16 @@ export class PostsService {
         });
       }
 
+      // Трек может прийти как наш `musicId` или как найденный в каталоге
+      // (`provider`+`externalId`, GET /music/online) — тогда импортируем его.
+      const musicId = await this.resolveMusicId(dto);
+
       const post = await this.prisma.post.create({
         data: {
           userId,
           caption: dto.caption ?? null,
           locationId: dto.locationId ?? null,
-          musicId: dto.musicId ?? null,
+          musicId,
           isReel: dto.isReel ?? false,
           media: { create: mediaRows },
           ...(dto.taggedUserIds?.length
@@ -147,9 +172,9 @@ export class PostsService {
       this.notifyTagged(post.id, userId, dto.taggedUserIds);
       await this.notifyNewPost(post.id, userId);
 
-      if (dto.musicId) {
+      if (musicId) {
         await this.prisma.music.update({
-          where: { id: dto.musicId },
+          where: { id: musicId },
           data: { usesCount: { increment: 1 } },
         });
       }
@@ -573,15 +598,7 @@ export class PostsService {
         filter: m.filter,
       })),
       location: row.location,
-      music: row.music
-        ? {
-            id: row.music.id,
-            title: row.music.title,
-            artist: row.music.artist,
-            streamUrl: `${this.appUrl}/api/music/${row.music.id}/stream`,
-            coverUrl: row.music.coverUrl,
-          }
-        : null,
+      music: this.attachedMusic.toDto(row.music),
       taggedUsers: row.taggedUsers.map((t) => this.toBrief(t.user)),
       hashtags: row.hashtags.map((h) => h.hashtag.name),
       likesCount: row._count.likes,
@@ -591,6 +608,20 @@ export class PostsService {
       isFavorited: favorited.has(row.id),
       createdAt: row.createdAt,
     };
+  }
+
+  /** Наш `musicId` либо трек из каталога по `provider`+`externalId` (импортируем). */
+  private async resolveMusicId(dto: {
+    musicId?: number;
+    provider?: MusicProvider;
+    externalId?: string;
+  }): Promise<number | null> {
+    if (dto.musicId) return dto.musicId;
+    if (!dto.externalId) return null;
+    if (!dto.provider) {
+      throw new BadRequestException('externalId без provider — непонятно, из какого каталога трек');
+    }
+    return this.online.ensureImported(dto.provider, dto.externalId);
   }
 
   private toBrief(u: PostRow['user']): UserBriefDto {

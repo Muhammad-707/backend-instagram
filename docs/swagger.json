@@ -9704,7 +9704,7 @@
           "country"
         ]
       },
-      "PostMusicDto": {
+      "AttachedMusicDto": {
         "type": "object",
         "properties": {
           "id": {
@@ -9713,27 +9713,51 @@
           },
           "title": {
             "type": "string",
-            "example": "Soundhelix song 1"
+            "example": "Blinding Lights"
           },
           "artist": {
             "type": "string",
-            "example": "SoundHelix"
-          },
-          "streamUrl": {
-            "type": "string",
-            "example": "http://localhost:3000/api/music/35/stream"
+            "example": "The Weeknd"
           },
           "coverUrl": {
             "type": "string",
-            "example": "http://localhost:9000/instagram/music/covers/x.webp"
+            "example": "https://.../cover.jpg"
+          },
+          "streamUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Наш стриминг с Range (перемотка) — только если mp3 лежит у нас. У трека из внешнего каталога null: полного файла нет."
+          },
+          "previewUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Что играет у внешнего трека — 30-сек превью каталога."
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "SPOTIFY",
+              "DEEZER"
+            ],
+            "nullable": true,
+            "description": "Каталог, откуда трек. null — наш локальный mp3"
+          },
+          "externalId": {
+            "type": "string",
+            "nullable": true
+          },
+          "isFullTrack": {
+            "type": "boolean",
+            "example": true,
+            "description": "true — играется целиком (наш mp3); false — только 30-сек превью"
           }
         },
         "required": [
           "id",
           "title",
           "artist",
-          "streamUrl",
-          "coverUrl"
+          "coverUrl",
+          "isFullTrack"
         ]
       },
       "PostDto": {
@@ -9784,7 +9808,7 @@
             "type": "object",
             "allOf": [
               {
-                "$ref": "#/components/schemas/PostMusicDto"
+                "$ref": "#/components/schemas/AttachedMusicDto"
               }
             ]
           },
@@ -10071,40 +10095,6 @@
           "reason"
         ]
       },
-      "StoryMusicDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number",
-            "example": 35
-          },
-          "title": {
-            "type": "string",
-            "example": "Soundhelix song 1"
-          },
-          "artist": {
-            "type": "string",
-            "example": "SoundHelix"
-          },
-          "streamUrl": {
-            "type": "string"
-          },
-          "coverUrl": {
-            "type": "string",
-            "nullable": true
-          },
-          "startSec": {
-            "type": "number",
-            "nullable": true
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "artist",
-          "streamUrl"
-        ]
-      },
       "StoryDto": {
         "type": "object",
         "properties": {
@@ -10138,7 +10128,7 @@
             "type": "object",
             "allOf": [
               {
-                "$ref": "#/components/schemas/StoryMusicDto"
+                "$ref": "#/components/schemas/AttachedMusicDto"
               }
             ]
           },

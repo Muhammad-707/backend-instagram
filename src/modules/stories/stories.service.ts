@@ -7,11 +7,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { FollowStatus, MediaType, MsgType, NotifType, Prisma } from '@prisma/client';
+import { FollowStatus, MediaType, MsgType, MusicProvider, NotifType, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
+import { AttachedMusicService } from '../music/attached-music.service';
+import { OnlineMusicService } from '../music/online/online-music.service';
 import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
 import {
   DeleteExpiredStoryPayload,
@@ -58,7 +60,17 @@ const STORY_SELECT = {
   fromPostId: true,
   createdAt: true,
   expiresAt: true,
-  music: { select: { id: true, title: true, artist: true, coverUrl: true } },
+  music: {
+    select: {
+      id: true,
+      title: true,
+      artist: true,
+      coverUrl: true,
+      url: true,
+      provider: true,
+      externalId: true,
+    },
+  },
   _count: { select: { likes: true } },
 } satisfies Prisma.StorySelect;
 
@@ -79,6 +91,8 @@ export class StoriesService {
     private readonly chat: ChatUtilService,
     private readonly events: EventEmitter2,
     @InjectQueue(STORIES_QUEUE) private readonly queue: Queue<DeleteExpiredStoryPayload>,
+    private readonly online: OnlineMusicService,
+    private readonly attachedMusic: AttachedMusicService,
     config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -111,6 +125,10 @@ export class StoriesService {
     const created: number[] = [];
     const stored: { key: string; thumbKey?: string }[] = [];
     try {
+      // Трек резолвим ОДИН раз до цикла: мультизагрузка создаёт N историй, и
+      // импорт внутри цикла ходил бы во внешний каталог на каждый файл.
+      const musicId = await this.resolveMusicId(dto);
+
       for (const v of validated) {
         const processed = await this.media.process(v);
         const key = this.storage.buildKey(v.kind, processed.ext);
@@ -132,7 +150,7 @@ export class StoriesService {
             mediaType: v.kind === 'VIDEO' ? MediaType.VIDEO : MediaType.IMAGE,
             thumbUrl,
             duration: processed.duration ?? 5,
-            musicId: dto.musicId ?? null,
+            musicId,
             musicStartSec: dto.musicStartSec ?? null,
             overlays: overlays ?? Prisma.DbNull,
             filter: dto.filter ?? null,
@@ -145,9 +163,9 @@ export class StoriesService {
         await this.scheduleDeletion(story.id, expiresAt);
       }
 
-      if (dto.musicId) {
+      if (musicId) {
         await this.prisma.music.update({
-          where: { id: dto.musicId },
+          where: { id: musicId },
           data: { usesCount: { increment: created.length } },
         });
       }
@@ -558,16 +576,7 @@ export class StoriesService {
       mediaType: row.mediaType,
       thumbUrl: row.thumbUrl,
       duration: row.duration,
-      music: row.music
-        ? {
-            id: row.music.id,
-            title: row.music.title,
-            artist: row.music.artist,
-            streamUrl: `${this.appUrl}/api/music/${row.music.id}/stream`,
-            coverUrl: row.music.coverUrl,
-            startSec: row.musicStartSec,
-          }
-        : null,
+      music: this.attachedMusic.toDto(row.music),
       overlays: row.overlays ?? null,
       filter: row.filter,
       closeFriendsOnly: row.closeFriendsOnly,
@@ -591,6 +600,20 @@ export class StoriesService {
 
   private notify(userId: string, actorId: string, type: NotifType, storyId: number): void {
     this.events.emit(NOTIFY_EVENT, { userId, actorId, type, storyId } satisfies NotifyPayload);
+  }
+
+  /** Наш `musicId` либо трек из каталога по `provider`+`externalId` (импортируем). */
+  private async resolveMusicId(dto: {
+    musicId?: number;
+    provider?: MusicProvider;
+    externalId?: string;
+  }): Promise<number | null> {
+    if (dto.musicId) return dto.musicId;
+    if (!dto.externalId) return null;
+    if (!dto.provider) {
+      throw new BadRequestException('externalId без provider — непонятно, из какого каталога трек');
+    }
+    return this.online.ensureImported(dto.provider, dto.externalId);
   }
 
   private toBrief(u: UserBriefRow): UserBriefDto {

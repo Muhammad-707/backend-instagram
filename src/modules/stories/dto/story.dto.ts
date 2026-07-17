@@ -1,8 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { MediaType } from '@prisma/client';
+import { MediaType, MusicProvider } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { IsEmoji } from '../../../common/validators/is-emoji.decorator';
+import { AttachedMusicDto } from '../../music/attached-music.service';
 import { UserBriefDto } from '../../users/dto/users.dto';
 
 export const MAX_STORY_FILES = 10;
@@ -16,6 +25,22 @@ export class CreateStoryDto {
   @Type(() => Number)
   @IsInt()
   musicId?: number;
+
+  @ApiPropertyOptional({
+    enum: MusicProvider,
+    description: 'Каталог трека, найденного через GET /music/online. В паре с externalId.',
+  })
+  @IsOptional()
+  @IsEnum(MusicProvider)
+  provider?: MusicProvider;
+
+  @ApiPropertyOptional({
+    example: '908604612',
+    description: 'id трека в каталоге — импортируем и прикрепим к истории.',
+  })
+  @IsOptional()
+  @IsString()
+  externalId?: string;
 
   @ApiPropertyOptional({ example: 12.5, description: 'С какой секунды играть музыку' })
   @IsOptional()
@@ -70,26 +95,6 @@ export class StoryReplyDto {
 
 // ─────────────── ответы ───────────────
 
-export class StoryMusicDto {
-  @ApiProperty({ example: 35 })
-  id!: number;
-
-  @ApiProperty({ example: 'Soundhelix song 1' })
-  title!: string;
-
-  @ApiProperty({ example: 'SoundHelix' })
-  artist!: string;
-
-  @ApiProperty()
-  streamUrl!: string;
-
-  @ApiPropertyOptional({ type: String, nullable: true })
-  coverUrl?: string | null;
-
-  @ApiPropertyOptional({ type: Number, nullable: true })
-  startSec?: number | null;
-}
-
 export class StoryDto {
   @ApiProperty({ example: 12 })
   id!: number;
@@ -106,8 +111,8 @@ export class StoryDto {
   @ApiProperty({ example: 5, description: 'Секунд показа' })
   duration!: number;
 
-  @ApiPropertyOptional({ type: StoryMusicDto, nullable: true })
-  music?: StoryMusicDto | null;
+  @ApiPropertyOptional({ type: AttachedMusicDto, nullable: true })
+  music?: AttachedMusicDto | null;
 
   // Асимметрия чтения и записи, поэтому описана явно: в CreateStoryDto
   // overlays — СТРОКА с JSON (multipart иначе не умеет), а здесь, на чтение,

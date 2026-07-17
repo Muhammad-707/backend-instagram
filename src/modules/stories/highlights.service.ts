@@ -209,7 +209,17 @@ export class HighlightsService {
         fromPostId: true,
         createdAt: true,
         expiresAt: true,
-        music: { select: { id: true, title: true, artist: true, coverUrl: true } },
+        music: {
+          select: {
+            id: true,
+            title: true,
+            artist: true,
+            coverUrl: true,
+            url: true,
+            provider: true,
+            externalId: true,
+          },
+        },
         _count: { select: { likes: true } },
       },
     });
@@ -236,7 +246,17 @@ export type HighlightStoryRow = Prisma.StoryGetPayload<{
     fromPostId: true;
     createdAt: true;
     expiresAt: true;
-    music: { select: { id: true; title: true; artist: true; coverUrl: true } };
+    music: {
+      select: {
+        id: true;
+        title: true;
+        artist: true;
+        coverUrl: true;
+        url: true;
+        provider: true;
+        externalId: true;
+      };
+    };
     _count: { select: { likes: true } };
   };
 }>;

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AttachedMusicService } from './attached-music.service';
 import { MusicController } from './music.controller';
 import { MusicService } from './music.service';
 import { DeezerService } from './online/deezer.service';
@@ -13,7 +14,13 @@ import { SpotifyService } from './online/spotify.service';
   // при обратном порядке он перехватывал бы `/music/online` (id=«online» →
   // «numeric string is expected», 400). Конкретный путь должен идти до параметра.
   controllers: [OnlineMusicController, MusicController],
-  providers: [MusicService, DeezerService, SpotifyService, OnlineMusicService],
-  exports: [MusicService, OnlineMusicService],
+  providers: [
+    MusicService,
+    DeezerService,
+    SpotifyService,
+    OnlineMusicService,
+    AttachedMusicService,
+  ],
+  exports: [MusicService, OnlineMusicService, AttachedMusicService],
 })
 export class MusicModule {}
