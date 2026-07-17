@@ -50,6 +50,11 @@ export class CreateNoteDto {
   @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'bgColor: hex-цвет вида #RRGGBB' })
   bgColor?: string;
 
+  @ApiPropertyOptional({ example: '#222222', description: 'Цвет текста заметки (hex)' })
+  @IsOptional()
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'textColor: hex-цвет вида #RRGGBB' })
+  textColor?: string;
+
   @ApiPropertyOptional({
     enum: NoteAudience,
     default: NoteAudience.FOLLOWERS,
@@ -78,6 +83,11 @@ export class UpdateNoteDto {
   @IsOptional()
   @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'bgColor: hex-цвет вида #RRGGBB' })
   bgColor?: string;
+
+  @ApiPropertyOptional({ example: '#222222' })
+  @IsOptional()
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'textColor: hex-цвет вида #RRGGBB' })
+  textColor?: string;
 }
 
 export class NoteReplyDto {
@@ -148,6 +158,9 @@ export class NoteDto {
 
   @ApiPropertyOptional({ type: String, nullable: true, example: '#FFB6C1' })
   bgColor?: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, example: '#222222' })
+  textColor?: string | null;
 
   @ApiProperty({
     enum: NoteAudience,

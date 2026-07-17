@@ -785,6 +785,7 @@ model Note {
   text      String?      @db.VarChar(60)
   musicId   Int?
   bgColor   String?
+  textColor String?
   audience  NoteAudience @default(FOLLOWERS)
   createdAt DateTime     @default(now())
   expiresAt DateTime

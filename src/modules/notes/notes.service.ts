@@ -44,6 +44,7 @@ const NOTE_SELECT = {
   userId: true,
   text: true,
   bgColor: true,
+  textColor: true,
   audience: true,
   createdAt: true,
   expiresAt: true,
@@ -94,6 +95,7 @@ export class NotesService {
         text: dto.text,
         musicId: await this.resolveMusicId(dto),
         bgColor: dto.bgColor ?? null,
+        textColor: dto.textColor ?? null,
         audience: dto.audience ?? NoteAudience.FOLLOWERS,
         expiresAt: new Date(Date.now() + NOTE_TTL_MS),
       },
@@ -166,6 +168,7 @@ export class NotesService {
         ...(dto.text !== undefined ? { text: dto.text } : {}),
         ...(dto.musicId !== undefined ? { musicId: dto.musicId } : {}),
         ...(dto.bgColor !== undefined ? { bgColor: dto.bgColor } : {}),
+        ...(dto.textColor !== undefined ? { textColor: dto.textColor } : {}),
       },
     });
     return this.byId(userId, id);
@@ -391,6 +394,7 @@ export class NotesService {
       author: this.toBrief(row.user),
       music: row.music ? this.toNoteMusic(row.music) : null,
       bgColor: row.bgColor,
+      textColor: row.textColor,
       audience: row.audience,
       likesCount: row._count.likes,
       isLiked,
