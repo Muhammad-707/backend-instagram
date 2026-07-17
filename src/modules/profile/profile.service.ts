@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { FollowStatus, NotifType, Prisma } from '@prisma/client';
+import { FollowStatus, NotifType, Prisma, TagStatus } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
 import { buildCursorPage, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -237,7 +237,15 @@ export class ProfileService {
     dto: { cursor?: string; limit: number },
   ): Promise<CursorPage<PostBriefDto>> {
     await this.access.assertCanViewContent(viewerId, targetId);
-    return this.pagePosts({ isArchived: false, taggedUsers: { some: { userId: targetId } } }, dto);
+    // «Фото с вами» = только подтверждённые отметки: пока человек не принял тег,
+    // пост не висит в его профиле (Instagram-ревью отметок).
+    return this.pagePosts(
+      {
+        isArchived: false,
+        taggedUsers: { some: { userId: targetId, status: TagStatus.ACCEPTED } },
+      },
+      dto,
+    );
   }
 
   /** Сохранённое — только своё, чужое никому не показываем. */

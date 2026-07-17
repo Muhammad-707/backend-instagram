@@ -558,16 +558,24 @@ model Share {
   @@index([userId, createdAt])
 }
 
+enum TagStatus {
+  PENDING // отметка ждёт подтверждения отмеченного (не видна в «Фото с вами»)
+  ACCEPTED // отмеченный подтвердил → пост в его «Фото с вами»
+  DECLINED // отмеченный отклонил → отметка скрыта
+}
+
 model PostTag {
-  id     String @id @default(uuid())
-  postId Int
-  userId String
+  id        String    @id @default(uuid())
+  postId    Int
+  userId    String
+  status    TagStatus @default(PENDING)
+  createdAt DateTime  @default(now())
 
   post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([postId, userId])
-  @@index([userId])
+  @@index([userId, status])
 }
 
 model Comment {

@@ -42,6 +42,7 @@ import {
   ReportPostDto,
   ShareDto,
   ShareResultDto,
+  TagActionDto,
   UpdatePostDto,
   ViewDto,
 } from './dto/post.dto';
@@ -193,6 +194,21 @@ export class PostsController {
     return this.commentsService.listReplies(userId, id, dto);
   }
 
+  // ─────────── отметки / «Фото с вами» (пути 'tags/...' — ДО ':id') ───────────
+
+  @Get('tags/pending')
+  @ApiOperation({
+    summary: 'Мои неподтверждённые отметки (ревью)',
+    description: 'Публикации, где меня отметили, но я ещё не принял. Принять → «Фото с вами».',
+  })
+  @ApiOkResponse({ type: [PostDto] })
+  async pendingTags(
+    @CurrentUser('id') userId: string,
+    @Query() dto: CursorDto,
+  ): Promise<CursorPage<PostDto>> {
+    return this.postsService.pendingTags(userId, dto);
+  }
+
   // ─────────── один пост ───────────
 
   @Get(':id')
@@ -313,6 +329,32 @@ export class PostsController {
     @Body() dto: ReportPostDto,
   ): Promise<{ message: string }> {
     return this.postsService.report(userId, id, dto.reason);
+  }
+
+  @Post(':id/tag/accept')
+  @ApiOperation({
+    summary: 'Принять отметку на публикации',
+    description: 'Меня отметили → подтверждаю → пост появляется в моём «Фото с вами».',
+  })
+  @ApiOkResponse({ type: TagActionDto })
+  async acceptTag(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TagActionDto> {
+    return this.postsService.acceptTag(userId, id);
+  }
+
+  @Post(':id/tag/decline')
+  @ApiOperation({
+    summary: 'Отклонить/убрать отметку на публикации',
+    description: 'Скрываю отметку: пост НЕ показывается в «Фото с вами».',
+  })
+  @ApiOkResponse({ type: TagActionDto })
+  async declineTag(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TagActionDto> {
+    return this.postsService.declineTag(userId, id);
   }
 
   // ─────────── комментарии к посту ───────────

@@ -12,6 +12,7 @@ import {
   NotifType,
   Prisma,
   ReportTargetType,
+  TagStatus,
 } from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AccessService } from '../../common/access/access.service';
@@ -37,6 +38,7 @@ import {
   PostDto,
   ShareDto,
   ShareResultDto,
+  TagActionDto,
   ViewDto,
 } from './dto/post.dto';
 
@@ -73,7 +75,12 @@ const POST_SELECT = {
       externalId: true,
     },
   },
-  taggedUsers: { select: { user: { select: USER_BRIEF } } },
+  // Только подтверждённые отметки видны на публикации; PENDING/DECLINED не «палят»
+  // человека, пока он сам не согласился (как ревью отметок в Instagram).
+  taggedUsers: {
+    where: { status: TagStatus.ACCEPTED },
+    select: { user: { select: USER_BRIEF } },
+  },
   hashtags: { select: { hashtag: { select: { name: true } } } },
   _count: { select: { likes: true, comments: true, views: true } },
 } satisfies Prisma.PostSelect;
@@ -160,7 +167,16 @@ export class PostsService {
           isReel: dto.isReel ?? false,
           media: { create: mediaRows },
           ...(dto.taggedUserIds?.length
-            ? { taggedUsers: { create: dto.taggedUserIds.map((id) => ({ userId: id })) } }
+            ? {
+                taggedUsers: {
+                  // Своя отметка сразу ACCEPTED (не спрашиваем себя же), чужая — PENDING:
+                  // отмеченный подтвердит через POST /posts/{id}/tag/accept.
+                  create: dto.taggedUserIds.map((id) => ({
+                    userId: id,
+                    status: id === userId ? TagStatus.ACCEPTED : TagStatus.PENDING,
+                  })),
+                },
+              }
             : {}),
         },
         select: { id: true },
@@ -188,6 +204,62 @@ export class PostsService {
       }
       throw e;
     }
+  }
+
+  // ─────────────────────── отметки (Instagram «Фото с вами») ───────────────────────
+
+  /**
+   * Мои неподтверждённые отметки — очередь на ревью (как «Отметки» в настройках IG).
+   * Отмеченный решает: показать пост в своём профиле («Фото с вами») или скрыть.
+   */
+  async pendingTags(userId: string, dto: CursorDto): Promise<CursorPage<PostDto>> {
+    const rows = await this.prisma.post.findMany({
+      where: {
+        isArchived: false,
+        taggedUsers: { some: { userId, status: TagStatus.PENDING } },
+      },
+      select: POST_SELECT,
+      orderBy: { id: 'desc' },
+      take: dto.limit + 1,
+      ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
+    });
+    return this.toPage(userId, rows, dto.limit);
+  }
+
+  /** Подтвердить свою отметку → пост появляется в моём «Фото с вами». */
+  async acceptTag(userId: string, postId: number): Promise<TagActionDto> {
+    const tag = await this.getMyTag(userId, postId);
+    if (tag.status !== TagStatus.ACCEPTED) {
+      await this.prisma.postTag.update({
+        where: { id: tag.id },
+        data: { status: TagStatus.ACCEPTED },
+      });
+    }
+    return { status: TagStatus.ACCEPTED };
+  }
+
+  /** Отклонить/убрать себя с отметки → пост НЕ показывается в «Фото с вами». */
+  async declineTag(userId: string, postId: number): Promise<TagActionDto> {
+    const tag = await this.getMyTag(userId, postId);
+    if (tag.status !== TagStatus.DECLINED) {
+      await this.prisma.postTag.update({
+        where: { id: tag.id },
+        data: { status: TagStatus.DECLINED },
+      });
+    }
+    return { status: TagStatus.DECLINED };
+  }
+
+  private async getMyTag(
+    userId: string,
+    postId: number,
+  ): Promise<{ id: string; status: TagStatus }> {
+    const tag = await this.prisma.postTag.findUnique({
+      where: { postId_userId: { postId, userId } },
+      select: { id: true, status: true },
+    });
+    if (!tag) throw new NotFoundException('Вас не отмечали на этой публикации');
+    return tag;
   }
 
   // ─────────────────────── ленты ───────────────────────

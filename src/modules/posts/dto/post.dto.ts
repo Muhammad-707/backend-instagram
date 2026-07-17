@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { MediaType, MusicProvider } from '@prisma/client';
+import { MediaType, MusicProvider, TagStatus } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
@@ -257,4 +257,13 @@ export class ShareResultDto {
 export class ArchiveDto {
   @ApiProperty({ example: true })
   isArchived!: boolean;
+}
+
+export class TagActionDto {
+  @ApiProperty({
+    enum: TagStatus,
+    example: TagStatus.ACCEPTED,
+    description: 'Итог: ACCEPTED → пост в «Фото с вами», DECLINED → скрыт',
+  })
+  status!: TagStatus;
 }
