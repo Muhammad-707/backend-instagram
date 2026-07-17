@@ -29,4 +29,10 @@ export class VerificationStatusDto {
 
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   currentPeriodEnd!: Date | null;
+
+  @ApiProperty({ example: 10, description: 'Цена подписки в $/мес (после 7 дней бесплатного триала)' })
+  priceUsd!: number;
+
+  @ApiProperty({ example: 7, description: 'Сколько дней бесплатного триала даётся' })
+  trialDays!: number;
 }

@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { FollowStatus, NotifType, Prisma, TagStatus } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
@@ -128,14 +134,29 @@ export class ProfileService {
   // ─────────────── редактирование ───────────────
 
   async update(userId: string, dto: UpdateProfileDto): Promise<ProfileDto> {
-    const { fullName, dob, ...profileFields } = dto;
+    const { fullName, dob, userName, ...profileFields } = dto;
 
-    // fullName и dob лежат в User, остальное — в Profile.
+    // Смена username: проверяем занятость заранее (регистронезависимо), чтобы
+    // отдать понятную 409 «занят», а не голый P2002. Свой же username — не конфликт.
+    if (userName !== undefined) {
+      const taken = await this.prisma.user.findFirst({
+        where: {
+          userName: { equals: userName, mode: 'insensitive' },
+          id: { not: userId },
+          isDeleted: false,
+        },
+        select: { id: true },
+      });
+      if (taken) throw new ConflictException('Этот username уже занят');
+    }
+
+    // fullName, dob и userName лежат в User, остальное — в Profile.
     await this.prisma.user.update({
       where: { id: userId },
       data: {
         ...(fullName !== undefined ? { fullName } : {}),
         ...(dob !== undefined ? { dob: new Date(dob) } : {}),
+        ...(userName !== undefined ? { userName } : {}),
         profile: {
           // upsert, а не update: у юзера из старых данных профиля могло не быть.
           upsert: { create: profileFields, update: profileFields },

@@ -7,7 +7,7 @@ import { VerificationStatusDto } from './dto/verification.dto';
 const DAY_MS = 86_400_000;
 const TRIAL_DAYS = 7;
 const PERIOD_DAYS = 30;
-const PRICE_USD = 1000;
+const PRICE_USD = 10;
 
 @Injectable()
 export class VerificationService {
@@ -31,6 +31,8 @@ export class VerificationService {
         daysLeft: null,
         trialEndsAt: null,
         currentPeriodEnd: null,
+        priceUsd: PRICE_USD,
+        trialDays: TRIAL_DAYS,
       };
     }
     const end = v.status === VerificationStatus.TRIAL ? v.trialEndsAt : v.currentPeriodEnd;
@@ -41,6 +43,8 @@ export class VerificationService {
       daysLeft: this.daysLeft(end),
       trialEndsAt: v.trialEndsAt,
       currentPeriodEnd: v.currentPeriodEnd,
+      priceUsd: PRICE_USD,
+      trialDays: TRIAL_DAYS,
     };
   }
 

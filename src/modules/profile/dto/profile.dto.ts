@@ -9,11 +9,28 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Matches,
   MaxLength,
+  MinLength,
 } from 'class-validator';
 import { CursorDto } from '../../../common/pagination/cursor.dto';
 
+const USERNAME_RE = /^[a-zA-Z0-9._]+$/;
+
 export class UpdateProfileDto {
+  @ApiPropertyOptional({
+    example: 'oo1_gm',
+    minLength: 3,
+    maxLength: 30,
+    description: 'Новый username. Если занят — 409; регистр не важен (Oo1 == oo1).',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(30)
+  @Matches(USERNAME_RE, { message: 'userName: только латиница, цифры, точка и подчёркивание' })
+  userName?: string;
+
   @ApiPropertyOptional({ example: 'Фотограф из Душанбе', maxLength: 150 })
   @IsOptional()
   @IsString()
