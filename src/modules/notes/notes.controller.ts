@@ -5,6 +5,7 @@ import {
   ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -36,12 +37,34 @@ export class NotesController {
 
   @Post()
   @ApiOperation({
-    summary: 'Создать заметку (text ≤60, musicId, bgColor; TTL 24ч)',
-    description: 'Одна активная заметка на юзера — новая заменяет прежнюю.',
+    summary: 'Создать заметку (text ≤60, musicId/spotifyId, bgColor, audience; TTL 24ч)',
+    description:
+      'Одна активная заметка на юзера — новая заменяет прежнюю. ' +
+      'audience: FOLLOWERS (всем подписчикам) или CLOSE_FRIENDS (только близким друзьям).',
   })
   @ApiCreatedResponse({ type: NoteDto })
   async create(@CurrentUser('id') userId: string, @Body() dto: CreateNoteDto): Promise<NoteDto> {
     return this.notesService.create(userId, dto);
+  }
+
+  /**
+   * Одна заметка по id. Метод в сервисе был давно (его зовёт create), а роута к
+   * нему не существовало — `GET /notes/:id` отвечал «Cannot GET». Нужен, чтобы
+   * открыть заметку по прямой ссылке, не вычитывая всю ленту.
+   */
+  @Get(':id')
+  @ApiOperation({ summary: 'Заметка по id' })
+  @ApiOkResponse({ type: NoteDto })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Не найдена, истекла или это заметка «только для близких друзей», а вы не в списке',
+  })
+  async byId(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<NoteDto> {
+    return this.notesService.byId(userId, id);
   }
 
   @Put(':id')

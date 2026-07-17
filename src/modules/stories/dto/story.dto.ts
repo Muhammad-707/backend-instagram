@@ -129,7 +129,11 @@ export class StoryDto {
   @ApiProperty({ example: false })
   closeFriendsOnly!: boolean;
 
-  @ApiPropertyOptional({ type: Number, nullable: true, description: 'id поста, если история — репост' })
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    description: 'id поста, если история — репост',
+  })
   fromPostId?: number | null;
 
   @ApiProperty({ example: false, description: 'Смотрел ли Я — считается на СЕРВЕРЕ' })
@@ -187,7 +191,12 @@ export class StoryViewerDto {
   @ApiProperty({ example: false, description: 'Этот зритель лайкнул' })
   liked!: boolean;
 
-  @ApiPropertyOptional({ type: String, example: '❤️', nullable: true, description: 'Реакция зрителя, если была' })
+  @ApiPropertyOptional({
+    type: String,
+    example: '❤️',
+    nullable: true,
+    description: 'Реакция зрителя, если была',
+  })
   reaction?: string | null;
 
   @ApiProperty()

@@ -10,6 +10,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { SocketService } from '../socket/socket.service';
 import { LiveRealtimeService, liveRoom, liveUserRoom } from './live-realtime.service';
+import { LiveService } from './live.service';
 
 interface AccessPayload {
   sub: string;
@@ -36,6 +37,7 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection {
     private readonly config: ConfigService,
     private readonly bridge: LiveRealtimeService,
     private readonly socket: SocketService,
+    private readonly live: LiveService,
   ) {}
 
   afterInit(server: Server): void {
@@ -74,9 +76,19 @@ export class LiveGateway implements OnGatewayInit, OnGatewayConnection {
     }
   }
 
+  /**
+   * Подписка на комнату эфира — только тем, кому эфир вообще виден.
+   *
+   * Без этой проверки сокет обходил REST-guard: `POST /live/:id/join`
+   * заблокированному отвечал 403, но `live:subscribe` пускал его в комнату, и
+   * он читал комментарии/реакции в реальном времени. Медиа-токен он бы не
+   * получил (его выдаёт только join), но переписка эфира утекала.
+   */
   @SubscribeMessage('live:subscribe')
   async onSubscribe(client: AuthedSocket, liveId: string): Promise<void> {
-    if (client.userId && typeof liveId === 'string') await client.join(liveRoom(liveId));
+    if (!client.userId || typeof liveId !== 'string') return;
+    if (!(await this.live.canView(client.userId, liveId))) return;
+    await client.join(liveRoom(liveId));
   }
 
   @SubscribeMessage('live:unsubscribe')

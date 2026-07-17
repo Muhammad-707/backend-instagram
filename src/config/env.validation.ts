@@ -21,7 +21,7 @@ import * as Joi from 'joi';
  * сатҳи модул ҳисоб кунем, валидатор дар прод хомӯшона ба режими dev меафтад
  * — яъне ҳамон баге, ки ин файл бояд онро пешгирӣ кунад.
  */
-function buildSchema(isProd: boolean): Joi.ObjectSchema {
+function buildSchema(isProd: boolean): Joi.ObjectSchema<Record<string, unknown>> {
   /** Дар прод `localhost`/`127.0.0.1` ҳамеша хатост — ин конфиги dev аст. */
   const noLocalhost = (label: string) =>
     Joi.string()
@@ -42,7 +42,7 @@ function buildSchema(isProd: boolean): Joi.ObjectSchema {
   const requiredInProd = <T extends Joi.Schema>(schema: T, devDefault: string | number): T =>
     (isProd ? schema.required() : schema.default(devDefault)) as T;
 
-  return Joi.object({
+  return Joi.object<Record<string, unknown>>({
     // ---- App ----
     NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
     PORT: Joi.number().port().default(3000),
@@ -110,14 +110,19 @@ function buildSchema(isProd: boolean): Joi.ObjectSchema {
 
 /** Хатогии хонданбоб бо рӯйхати аниқи он чи намерасад — на stack-и Joi. */
 export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {
-  const nodeEnv = String(config.NODE_ENV ?? process.env.NODE_ENV ?? 'development');
-  const { error, value } = buildSchema(nodeEnv === 'production').validate(config, {
+  const rawNodeEnv = config.NODE_ENV ?? process.env.NODE_ENV;
+  const nodeEnv = typeof rawNodeEnv === 'string' ? rawNodeEnv : 'development';
+
+  // Натиҷаро пеш аз тафтиши `error` кушода намекунем: дар шохаи хатогии Joi
+  // `value` типи `any` дорад, ва танҳо баъди narrowing аз рӯи `error` он
+  // `Record<string, unknown>` мешавад.
+  const result = buildSchema(nodeEnv === 'production').validate(config, {
     abortEarly: false,
     allowUnknown: true,
   });
 
-  if (error) {
-    const lines = error.details.map(
+  if (result.error) {
+    const lines = result.error.details.map(
       (d) => `  · ${d.context?.label ?? d.path.join('.')}: ${d.message}`,
     );
     throw new Error(
@@ -127,5 +132,5 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
     );
   }
 
-  return value as Record<string, unknown>;
+  return result.value;
 }

@@ -8,9 +8,15 @@
  * Иҷро: `npx ts-node scripts/smoke.ts` (API бояд кор кунад, SMOKE_URL-ро бинед).
  */
 import { PrismaClient } from '@prisma/client';
-import { readFileSync } from 'fs';
+import ffmpegStatic from 'ffmpeg-static';
+import ffmpeg from 'fluent-ffmpeg';
+import { readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import sharp from 'sharp';
+
+// В системе ffmpeg может не стоять — берём бинарь оттуда же, откуда его берёт API.
+if (ffmpegStatic) ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const BASE = process.env.SMOKE_URL ?? 'http://localhost:4000/api';
 
@@ -92,6 +98,32 @@ const jpeg = () =>
   sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 200, g: 80, b: 40 } } })
     .jpeg()
     .toBuffer();
+
+/**
+ * Голосовое для теста — настоящий mp3, сгенерированный ffmpeg'ом (2 сек тишины).
+ *
+ * Не берём файл из `assets/music/`: он в .gitignore (175 МБ аудио в репозиторий
+ * не кладём), и на чистом клоне smoke падал бы не из-за бага, а из-за отсутствия
+ * фикстуры. Настоящий mp3 нужен по-честному: сервер определяет тип по
+ * magic-bytes и вытаскивает длительность через ffprobe — подделка не пройдёт.
+ */
+async function voiceMp3(): Promise<Buffer> {
+  const out = join(tmpdir(), `smoke-voice-${process.pid}.mp3`);
+  await new Promise<void>((resolve, reject) => {
+    ffmpeg()
+      .input('anullsrc=r=44100:cl=mono')
+      .inputFormat('lavfi')
+      .duration(2)
+      .audioCodec('libmp3lame')
+      .audioBitrate('64k')
+      .on('end', () => resolve())
+      .on('error', (e: Error) => reject(e))
+      .save(out);
+  });
+  const buf = readFileSync(out);
+  rmSync(out, { force: true });
+  return buf;
+}
 
 async function imageForm(field: string, count = 1): Promise<FormData> {
   const fd = new FormData();
@@ -398,6 +430,7 @@ async function main(): Promise<void> {
   await call('GET', `/notes/${noteId}/likes`, { token: t1, route: '/notes/{id}/likes' });
   await call('POST', `/notes/${noteId}/reply`, { token: t2, body: { text: 'reply' }, route: '/notes/{id}/reply' });
   await call('GET', `/notes/${noteId}/replies`, { token: t1, route: '/notes/{id}/replies' });
+  await call('GET', `/notes/${noteId}`, { token: t1, route: '/notes/{id}' });
 
   // ── chats ─────────────────────────────────────────────────────────────
   const chat = await call('POST', '/chats', { token: t1, body: { receiverUserId: id2 } });
@@ -417,7 +450,37 @@ async function main(): Promise<void> {
   await call('PUT', `/chats/${chatId}/nickname`, { token: t1, body: { userId: id2, nickname: 'Bro' }, route: '/chats/{id}/nickname' });
   await call('PUT', `/chats/${chatId}/mute`, { token: t1, body: { muted: true }, route: '/chats/{id}/mute' });
   await call('POST', `/chats/${chatId}/report`, { token: t1, body: { reason: 'SPAM' }, route: '/chats/{id}/report' });
-  await call('POST', `/chats/${chatId}/call`, { token: t1, route: '/chats/{id}/call' });
+  // ── зангҳо: ҳаёти пурра (RINGING → ONGOING → ENDED) ──
+  await call('GET', '/chats/calls/ice-servers', { token: t1, route: '/chats/calls/ice-servers' });
+  const started = await call('POST', `/chats/${chatId}/call`, {
+    token: t1,
+    route: '/chats/{id}/call',
+  });
+  const callId: string = started.data?.callId;
+  if (callId) {
+    await call('POST', `/chats/calls/${callId}/answer`, {
+      token: t2,
+      route: '/chats/calls/{callId}/answer',
+    });
+    const done = await call('POST', `/chats/calls/${callId}/end`, {
+      token: t1,
+      route: '/chats/calls/{callId}/end',
+    });
+    check(
+      'занг: ҳолат ENDED ва дарозӣ ҳисоб мешавад',
+      done.data?.status === 'ENDED' && typeof done.data?.durationSec === 'number',
+      JSON.stringify(done.data),
+    );
+  }
+  // Занги дуюм — барои decline.
+  const ring2 = await call('POST', `/chats/${chatId}/call`, { token: t1, route: '/chats/{id}/call' });
+  if (ring2.data?.callId) {
+    await call('POST', `/chats/calls/${ring2.data.callId}/decline`, {
+      token: t2,
+      route: '/chats/calls/{callId}/decline',
+    });
+  }
+  await call('GET', `/chats/${chatId}/calls`, { token: t1, route: '/chats/{id}/calls' });
   // Дархости чат аз бегона пайдо мешавад (u3 приват аст ва ба u1/u2 обуна нест).
   const chat3 = await call('POST', '/chats', { token: t3, body: { receiverUserId: id2 }, route: '/chats' });
   if (chat3.data?.id) {
@@ -431,6 +494,72 @@ async function main(): Promise<void> {
     await call('POST', `/chats/requests/${creqs[0].id}/accept`, { token: t2, route: '/chats/requests/{id}/accept' });
   } else {
     console.log('\n  ⚠ дархости чат наомад — /chats/requests/{id}/accept назада монд');
+  }
+
+  // Юзери чорум — танҳо барои «илова кун → хориҷ кун» дар гурӯҳ.
+  const uAdd = mkUser('g');
+  const rAdd = await call('POST', '/auth/register', {
+    body: uAdd,
+    route: '/auth/register',
+    expect: [201, 200],
+  });
+  const id4x: string = rAdd.data?.user?.id;
+
+  // ── паёми овозӣ (голосовое): mp3-и ВОҚЕӢ, на матн ──
+  // Ин ҷо magic-bytes, кашидани дарозӣ ва S3 якҷоя санҷида мешаванд: сервер
+  // навъро аз худи файл муайян мекунад, на аз он чи клиент мегӯяд.
+  const voice = await voiceMp3();
+  const vf = new FormData();
+  vf.append('file', new Blob([new Uint8Array(voice)], { type: 'audio/mpeg' }), 'voice.mp3');
+  const voiceMsg = await call('POST', `/chats/${chatId}/messages`, {
+    token: t1,
+    form: vf,
+    route: '/chats/{id}/messages',
+    expect: [201, 200],
+  });
+  check(
+    'паёми овозӣ: type=AUDIO ва дарозӣ кашида шуд',
+    voiceMsg.data?.type === 'AUDIO' && Number(voiceMsg.data?.duration) > 0,
+    JSON.stringify({ type: voiceMsg.data?.type, duration: voiceMsg.data?.duration }),
+  );
+  if (voiceMsg.data?.mediaUrl) {
+    const audioRes = await fetch(voiceMsg.data.mediaUrl);
+    check(
+      'паёми овозӣ воқеан кушода мешавад',
+      audioRes.ok && (audioRes.headers.get('content-type') ?? '').includes('audio'),
+      `${audioRes.status} ${audioRes.headers.get('content-type')}`,
+    );
+  }
+
+  // ── чати гурӯҳӣ ──
+  const group = await call('POST', '/chats/group', {
+    token: t1,
+    body: { title: 'smoke group', userIds: [id2, id3] },
+    route: '/chats/group',
+    expect: [201, 200],
+  });
+  const groupId: number = group.data?.id;
+  if (groupId) {
+    await call('POST', `/chats/${groupId}/participants`, {
+      token: t1,
+      body: { userIds: [id4x] },
+      route: '/chats/{id}/participants',
+      expect: [201, 200],
+    });
+    await call('DELETE', `/chats/${groupId}/participants/${id4x}`, {
+      token: t1,
+      route: '/chats/{id}/participants/{userId}',
+    });
+    await call('PUT', `/chats/${groupId}/title`, {
+      token: t1,
+      body: { title: 'smoke group 2' },
+      route: '/chats/{id}/title',
+    });
+    await call('POST', `/chats/${groupId}/leave`, {
+      token: t2,
+      route: '/chats/{id}/leave',
+      expect: [201, 200],
+    });
   }
 
   // decline дархости ДУЮМРО талаб мекунад — якумаш аллакай қабул шуд.

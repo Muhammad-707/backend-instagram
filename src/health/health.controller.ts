@@ -78,13 +78,15 @@ function withTimeout(promise: Promise<boolean>): Promise<boolean> {
  * сабаб мемонад, суроға ва парол не.
  */
 function redact(message: string): string {
-  return message
-    // `scheme://user:pass@host:port` — тамоми credential+host
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s`'"]+/gi, '***')
-    // IP:port ё host:port -и урён
-    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, '***')
-    .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?\b/gi, '***')
-    // мундариҷаи backtick-и Prisma: Can't reach database server at `host:port`
-    .replace(/`[^`]*`/g, '`***`')
-    .slice(0, 300);
+  return (
+    message
+      // `scheme://user:pass@host:port` — тамоми credential+host
+      .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s`'"]+/gi, '***')
+      // IP:port ё host:port -и урён
+      .replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, '***')
+      .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?\b/gi, '***')
+      // мундариҷаи backtick-и Prisma: Can't reach database server at `host:port`
+      .replace(/`[^`]*`/g, '`***`')
+      .slice(0, 300)
+  );
 }

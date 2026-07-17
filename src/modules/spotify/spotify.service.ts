@@ -86,6 +86,20 @@ export class SpotifyService {
     return this.music.byId(userId, musicId);
   }
 
+  /**
+   * Затащить трек из Spotify в нашу таблицу Music и вернуть его id —
+   * БЕЗ добавления в «сохранённые».
+   *
+   * Нужен для отправки трека в чат: «поделиться треком» и «сохранить себе» —
+   * разные намерения, и отправка не должна засорять чужой список сохранённого.
+   * Импорт идемпотентен (upsert по spotifyId), так что повторная отправка того
+   * же трека не плодит строки в Music.
+   */
+  async ensureImported(spotifyId: string): Promise<number> {
+    const track = await this.getTrack(spotifyId);
+    return this.importTrack(track);
+  }
+
   /** Убрать из сохранённых. Строку в Music не удаляем — она может быть в чьих-то постах. */
   async unsaveTrack(userId: string, spotifyId: string): Promise<SaveMusicDto> {
     const row = await this.prisma.music.findUnique({

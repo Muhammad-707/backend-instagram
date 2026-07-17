@@ -2337,7 +2337,7 @@
     },
     "/api/music/{id}/stream": {
       "get": {
-        "description": "Без Range → 200 и весь файл. С Range → 206 Partial Content + Content-Range. Плеер в браузере всегда шлёт Range — без 206 перемотка не работает.",
+        "description": "Без Range → 200 и весь файл. С Range → 206 Partial Content + Content-Range. Плеер в браузере всегда шлёт Range — без 206 перемотка не работает. Токен не нужен: роут публичный.",
         "operationId": "MusicController_stream",
         "parameters": [
           {
@@ -2370,11 +2370,7 @@
             "description": "Трек не найден"
           }
         },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
+        "security": [],
         "summary": "Стриминг mp3 с поддержкой Range (перемотка)",
         "tags": [
           "music"
@@ -4384,7 +4380,7 @@
         ]
       },
       "post": {
-        "description": "Одна активная заметка на юзера — новая заменяет прежнюю.",
+        "description": "Одна активная заметка на юзера — новая заменяет прежнюю. audience: FOLLOWERS (всем подписчикам) или CLOSE_FRIENDS (только близким друзьям).",
         "operationId": "NotesController_create",
         "parameters": [],
         "requestBody": {
@@ -4414,13 +4410,50 @@
             "bearer": []
           }
         ],
-        "summary": "Создать заметку (text ≤60, musicId, bgColor; TTL 24ч)",
+        "summary": "Создать заметку (text ≤60, musicId/spotifyId, bgColor, audience; TTL 24ч)",
         "tags": [
           "notes"
         ]
       }
     },
     "/api/notes/{id}": {
+      "get": {
+        "operationId": "NotesController_byId",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдена, истекла или это заметка «только для близких друзей», а вы не в списке"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Заметка по id",
+        "tags": [
+          "notes"
+        ]
+      },
       "put": {
         "operationId": "NotesController_update",
         "parameters": [
@@ -4759,6 +4792,428 @@
           }
         ],
         "summary": "Начать чат (идемпотентно)",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/group": {
+      "post": {
+        "description": "Создатель становится админом группы. Минимум 2 собеседника (иначе это обычный чат 1-на-1), максимум 32 участника. В отличие от 1-на-1, НЕ идемпотентно: две группы с одним составом — разные группы.",
+        "operationId": "ChatController_createGroup",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGroupChatDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupCreatedDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Меньше 2 собеседников / больше 32 участников"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Создать групповой чат",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/{id}/participants": {
+      "post": {
+        "description": "Добавлять может любой участник группы (как в IG).",
+        "operationId": "ChatController_addParticipants",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddParticipantsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Добавить участников в группу",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/{id}/participants/{userId}": {
+      "delete": {
+        "description": "Только админ (создатель группы). Себя удалить нельзя — для этого выход из группы.",
+        "operationId": "ChatController_removeParticipant",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Вы не админ группы"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Удалить участника из группы",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/{id}/leave": {
+      "post": {
+        "description": "Может любой участник. Если вышел админ — админом становится самый давний из оставшихся. Вышел последний — группа удаляется.",
+        "operationId": "ChatController_leaveGroup",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Выйти из группы",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/{id}/title": {
+      "put": {
+        "description": "Может любой участник (как в IG).",
+        "operationId": "ChatController_updateGroupTitle",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGroupTitleDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Переименовать группу",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/calls/ice-servers": {
+      "get": {
+        "description": "Отдать как есть в `new RTCPeerConnection({ iceServers })`. `hasTurn: false` — TURN не настроен, звонок между NAT может не соединиться.",
+        "operationId": "ChatController_iceServers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IceServersDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "ICE-серверы (STUN/TURN) для WebRTC",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/calls/{callId}/answer": {
+      "post": {
+        "description": "RINGING → ONGOING. Длительность считается от этого момента.",
+        "operationId": "ChatController_answerCall",
+        "parameters": [
+          {
+            "name": "callId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallStateDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Взять трубку",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/calls/{callId}/decline": {
+      "post": {
+        "description": "RINGING → DECLINED + строка в чате.",
+        "operationId": "ChatController_declineCall",
+        "parameters": [
+          {
+            "name": "callId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallStateDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Сбросить входящий",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/calls/{callId}/end": {
+      "post": {
+        "description": "ONGOING → ENDED (+ длительность). Если трубку так и не взяли — MISSED (пропущенный), а не разговор нулевой длины. Идемпотентно: обе стороны часто шлют end одновременно.",
+        "operationId": "ChatController_endCall",
+        "parameters": [
+          {
+            "name": "callId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallStateDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Завершить звонок",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/{id}/calls": {
+      "get": {
+        "operationId": "ChatController_calls",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "description": "Курсор последнего элемента предыдущей страницы",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20,
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Object"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CallStateDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "История звонков чата (курсорная)",
         "tags": [
           "chats"
         ]
@@ -7638,7 +8093,9 @@
               "STORY_REACTION",
               "NOTE_REPLY",
               "CALL",
-              "LIVE_INVITE"
+              "LIVE_INVITE",
+              "SYSTEM",
+              "MUSIC_SHARE"
             ]
           },
           "mediaUrl": {
@@ -7664,6 +8121,26 @@
             "type": "string",
             "nullable": true,
             "description": "Превью заметки (переживает её смерть)"
+          },
+          "music": {
+            "nullable": true,
+            "description": "Трек, если type=MUSIC_SHARE",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MessageMusicDto"
+              }
+            ]
+          },
+          "call": {
+            "nullable": true,
+            "description": "Звонок, если type=CALL",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MessageCallDto"
+              }
+            ]
           },
           "reactions": {
             "type": "array",
@@ -9756,18 +10233,35 @@
             "example": "SoundHelix"
           },
           "streamUrl": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "Наш стриминг с Range — только у локальных mp3. У треков из Spotify null: полного файла у нас нет, Spotify его не отдаёт."
+          },
+          "previewUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Что реально играет: наш mp3 либо 30-сек preview из Spotify."
           },
           "coverUrl": {
             "type": "string",
+            "nullable": true,
+            "description": "Обложка альбома"
+          },
+          "spotifyId": {
+            "type": "string",
             "nullable": true
+          },
+          "isFullTrack": {
+            "type": "boolean",
+            "example": true,
+            "description": "true — играется целиком; false — только превью"
           }
         },
         "required": [
           "id",
           "title",
           "artist",
-          "streamUrl"
+          "isFullTrack"
         ]
       },
       "NoteDto": {
@@ -9803,6 +10297,15 @@
             "nullable": true,
             "example": "#FFB6C1"
           },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "FOLLOWERS",
+              "CLOSE_FRIENDS"
+            ],
+            "example": "FOLLOWERS",
+            "description": "Кому видна: подписчикам или только близким друзьям"
+          },
           "likesCount": {
             "type": "number",
             "example": 2
@@ -9830,6 +10333,7 @@
           "id",
           "text",
           "author",
+          "audience",
           "likesCount",
           "isLiked",
           "isMine",
@@ -9847,12 +10351,27 @@
           },
           "musicId": {
             "type": "number",
-            "example": 35
+            "example": 35,
+            "description": "Трек из нашей библиотеки"
+          },
+          "spotifyId": {
+            "type": "string",
+            "example": "11dFghVXANMlKmJXsNCbNl",
+            "description": "Трек прямо из Spotify (id из /spotify/search) — импортируем в Music и прикрепим вместе с обложкой и названием. Не добавляет трек в «сохранённые»."
           },
           "bgColor": {
             "type": "string",
             "example": "#FFB6C1",
             "description": "Цвет фона заметки (hex)"
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "FOLLOWERS",
+              "CLOSE_FRIENDS"
+            ],
+            "default": "FOLLOWERS",
+            "description": "Кому видна заметка: FOLLOWERS — всем подписчикам, CLOSE_FRIENDS — только близким друзьям."
           }
         },
         "required": [
@@ -9999,13 +10518,42 @@
             "type": "number",
             "example": 5
           },
+          "isGroup": {
+            "type": "boolean",
+            "example": false,
+            "description": "true — групповой чат"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "Название группы (null у 1-на-1 и у групп без имени)"
+          },
           "peer": {
-            "description": "Собеседник (для 1-на-1)",
+            "nullable": true,
+            "description": "Собеседник. У группы — null: там нет «собеседника», есть participants.",
+            "type": "object",
             "allOf": [
               {
                 "$ref": "#/components/schemas/UserBriefDto"
               }
             ]
+          },
+          "participants": {
+            "description": "Участники, кроме меня. У 1-на-1 — один человек (тот же, что peer).",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserBriefDto"
+            }
+          },
+          "participantsCount": {
+            "type": "number",
+            "example": 4,
+            "description": "Сколько всего участников, включая меня"
+          },
+          "isAdmin": {
+            "type": "boolean",
+            "example": false,
+            "description": "Я админ (создатель) этой группы"
           },
           "peerNickname": {
             "type": "string",
@@ -10054,7 +10602,10 @@
         },
         "required": [
           "id",
-          "peer",
+          "isGroup",
+          "participants",
+          "participantsCount",
+          "isAdmin",
           "theme",
           "isMuted",
           "unreadCount",
@@ -10097,33 +10648,71 @@
           "isRequest"
         ]
       },
-      "EditMessageDto": {
+      "CreateGroupChatDto": {
         "type": "object",
         "properties": {
-          "text": {
+          "title": {
             "type": "string",
-            "example": "Исправленный текст",
-            "maxLength": 2000
+            "example": "Дӯстон",
+            "maxLength": 50,
+            "description": "Название группы. Если не задано — клиент показывает имена участников (как в IG)."
+          },
+          "userIds": {
+            "description": "Кого добавить (кроме себя). Минимум 2 — иначе это обычный чат 1-на-1.",
+            "example": [
+              "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+              "2b1c4d55-1111-4562-b3fc-2c963f66afa7"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
-          "text"
+          "userIds"
         ]
       },
-      "MessageReactionDto": {
+      "GroupCreatedDto": {
         "type": "object",
         "properties": {
-          "userId": {
-            "type": "string"
+          "id": {
+            "type": "number",
+            "example": 7
           },
-          "emoji": {
+          "isGroup": {
+            "type": "boolean",
+            "example": true
+          },
+          "title": {
             "type": "string",
-            "example": "❤️"
+            "nullable": true
+          },
+          "participantsCount": {
+            "type": "number",
+            "example": 4,
+            "description": "Участников всего, включая создателя"
           }
         },
         "required": [
-          "userId",
-          "emoji"
+          "id",
+          "isGroup",
+          "participantsCount"
+        ]
+      },
+      "AddParticipantsDto": {
+        "type": "object",
+        "properties": {
+          "userIds": {
+            "description": "Кого добавить в группу",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "userIds"
         ]
       },
       "OkDto": {
@@ -10141,6 +10730,252 @@
         },
         "required": [
           "ok"
+        ]
+      },
+      "UpdateGroupTitleDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "example": "Наши",
+            "maxLength": 50
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "IceServerDto": {
+        "type": "object",
+        "properties": {
+          "urls": {
+            "example": [
+              "stun:stun.l.google.com:19302"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "username": {
+            "type": "string",
+            "description": "Только для TURN"
+          },
+          "credential": {
+            "type": "string",
+            "description": "Только для TURN"
+          }
+        },
+        "required": [
+          "urls"
+        ]
+      },
+      "IceServersDto": {
+        "type": "object",
+        "properties": {
+          "iceServers": {
+            "description": "Отдать как есть в `new RTCPeerConnection({ iceServers })`",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IceServerDto"
+            }
+          },
+          "hasTurn": {
+            "type": "boolean",
+            "example": false,
+            "description": "false — TURN не настроен: звонок между двумя NAT (мобильный интернет) может не соединиться. Настраивается через TURN_URLS / TURN_USERNAME / TURN_PASSWORD в .env"
+          }
+        },
+        "required": [
+          "iceServers",
+          "hasTurn"
+        ]
+      },
+      "CallStateDto": {
+        "type": "object",
+        "properties": {
+          "callId": {
+            "type": "string"
+          },
+          "chatId": {
+            "type": "number",
+            "example": 5
+          },
+          "callerId": {
+            "type": "string",
+            "description": "Кто звонил"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "AUDIO",
+              "VIDEO"
+            ],
+            "example": "VIDEO"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RINGING",
+              "ONGOING",
+              "ENDED",
+              "MISSED",
+              "DECLINED"
+            ],
+            "example": "ENDED",
+            "description": "RINGING → ONGOING → ENDED. Не взяли трубку и завершили — MISSED (пропущенный), сбросили — DECLINED."
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Когда начали звонить"
+          },
+          "answeredAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Когда взяли трубку. null — не ответили"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "durationSec": {
+            "type": "number",
+            "example": 332,
+            "description": "Длительность РАЗГОВОРА в секундах (от ответа до конца). Не дозвонились → 0"
+          }
+        },
+        "required": [
+          "callId",
+          "chatId",
+          "callerId",
+          "type",
+          "status",
+          "startedAt",
+          "durationSec"
+        ]
+      },
+      "EditMessageDto": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "example": "Исправленный текст",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "MessageMusicDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number",
+            "example": 12
+          },
+          "title": {
+            "type": "string",
+            "example": "Blinding Lights"
+          },
+          "artist": {
+            "type": "string",
+            "example": "The Weeknd"
+          },
+          "coverUrl": {
+            "type": "string",
+            "example": "https://.../cover.jpg"
+          },
+          "duration": {
+            "type": "number",
+            "example": 200,
+            "description": "Длительность трека, сек"
+          },
+          "streamUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Наш стриминг с поддержкой Range — есть только у локальных mp3. У треков из Spotify null: полного файла у нас нет."
+          },
+          "previewUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Что реально играет: для локального трека — наш mp3, для Spotify — 30-сек preview (а если Spotify не дал preview — ссылка на Spotify, играть её нельзя)."
+          },
+          "spotifyId": {
+            "type": "string",
+            "nullable": true,
+            "description": "id в Spotify, если оттуда"
+          },
+          "isFullTrack": {
+            "type": "boolean",
+            "example": true,
+            "description": "true — играется целиком (наш mp3); false — только превью Spotify"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "artist",
+          "coverUrl",
+          "duration",
+          "isFullTrack"
+        ]
+      },
+      "MessageCallDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "AUDIO",
+              "VIDEO"
+            ],
+            "example": "AUDIO"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RINGING",
+              "ONGOING",
+              "ENDED",
+              "MISSED",
+              "DECLINED"
+            ],
+            "example": "ENDED"
+          },
+          "durationSec": {
+            "type": "number",
+            "example": 332,
+            "description": "Секунды разговора; пропущенный/отклонённый → 0"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "status",
+          "durationSec"
+        ]
+      },
+      "MessageReactionDto": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "emoji": {
+            "type": "string",
+            "example": "❤️"
+          }
+        },
+        "required": [
+          "userId",
+          "emoji"
         ]
       },
       "BulkDeleteDto": {
@@ -10202,6 +11037,64 @@
           "createdAt"
         ]
       },
+      "ChatParticipantDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "userName": {
+            "type": "string",
+            "example": "eraj"
+          },
+          "fullName": {
+            "type": "string",
+            "example": "Eraj Karimov"
+          },
+          "avatarUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "isVerified": {
+            "type": "boolean",
+            "example": false
+          },
+          "isPrivate": {
+            "type": "boolean",
+            "example": false
+          },
+          "nickname": {
+            "type": "string",
+            "nullable": true,
+            "description": "Лакаб в этом чате"
+          },
+          "isAdmin": {
+            "type": "boolean",
+            "example": false,
+            "description": "Админ группы (создатель)"
+          },
+          "isOnline": {
+            "type": "boolean",
+            "example": true,
+            "description": "Сейчас в сети"
+          },
+          "lastSeenAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "«был(а) в сети …». null — если сейчас онлайн"
+          }
+        },
+        "required": [
+          "id",
+          "userName",
+          "fullName",
+          "isVerified",
+          "isPrivate",
+          "isAdmin",
+          "isOnline"
+        ]
+      },
       "ChatDetailDto": {
         "type": "object",
         "properties": {
@@ -10209,8 +11102,40 @@
             "type": "number",
             "example": 5
           },
+          "isGroup": {
+            "type": "boolean",
+            "example": false
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "Название группы"
+          },
           "peer": {
-            "$ref": "#/components/schemas/UserBriefDto"
+            "nullable": true,
+            "description": "null у группы",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UserBriefDto"
+              }
+            ]
+          },
+          "participants": {
+            "description": "Участники, кроме меня — каждый со своим «в сети / был в сети»",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatParticipantDto"
+            }
+          },
+          "participantsCount": {
+            "type": "number",
+            "example": 4
+          },
+          "isAdmin": {
+            "type": "boolean",
+            "example": false,
+            "description": "Я админ (создатель) группы"
           },
           "theme": {
             "type": "string",
@@ -10222,7 +11147,8 @@
           },
           "isOnline": {
             "type": "boolean",
-            "example": true
+            "example": true,
+            "description": "У группы всегда false — онлайн считается по peer"
           },
           "lastSeenAt": {
             "type": "string",
@@ -10232,7 +11158,10 @@
         },
         "required": [
           "id",
-          "peer",
+          "isGroup",
+          "participants",
+          "participantsCount",
+          "isAdmin",
           "theme",
           "isMuted",
           "isOnline"

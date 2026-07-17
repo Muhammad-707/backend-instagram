@@ -9,5 +9,7 @@ import { SpotifyService } from './spotify.service';
   imports: [MusicModule],
   controllers: [SpotifyController],
   providers: [SpotifyService],
+  // ChatService импортирует трек из Spotify при отправке в чат (MUSIC_SHARE).
+  exports: [SpotifyService],
 })
 export class SpotifyModule {}

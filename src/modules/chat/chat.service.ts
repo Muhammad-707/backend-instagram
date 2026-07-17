@@ -4,7 +4,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CallType, MsgType, Prisma, RequestStatus, ReportTargetType } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import {
+  CallStatus,
+  CallType,
+  MsgType,
+  Prisma,
+  RequestStatus,
+  ReportTargetType,
+} from '@prisma/client';
+import { SpotifyService } from '../spotify/spotify.service';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
 import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
@@ -18,16 +27,22 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { UserBriefDto } from '../users/dto/users.dto';
 import {
   CallStartedDto,
+  CallStateDto,
   ChatCreatedDto,
   ChatDetailDto,
   ChatListItemDto,
+  CreateGroupChatDto,
   DeletedCountDto,
+  GroupCreatedDto,
+  IceServerDto,
+  IceServersDto,
   MessageDto,
+  MessageMusicDto,
   MessageRequestItemDto,
   OkDto,
   SendMessageDto,
 } from './dto/chat.dto';
-import { EDIT_WINDOW_MS } from './dto/chat.dto';
+import { EDIT_WINDOW_MS, GROUP_MAX_MEMBERS, GROUP_MIN_INVITES } from './dto/chat.dto';
 
 const USER_BRIEF = {
   id: true,
@@ -54,13 +69,42 @@ const MESSAGE_SELECT = {
   sentAt: true,
   reactions: { select: { userId: true, emoji: true } },
   reads: { select: { userId: true } },
+  music: {
+    select: {
+      id: true,
+      title: true,
+      artist: true,
+      coverUrl: true,
+      duration: true,
+      url: true,
+      spotifyId: true,
+    },
+  },
+  // Строка о звонке (type=CALL) — тип/статус/длительность берём из самого
+  // звонка, а не дублируем в тексте сообщения: один источник правды.
+  call: { select: { id: true, type: true, status: true, answeredAt: true, endedAt: true } },
 } satisfies Prisma.MessageSelect;
+
+const CALL_SELECT = {
+  id: true,
+  chatId: true,
+  callerId: true,
+  type: true,
+  status: true,
+  startedAt: true,
+  answeredAt: true,
+  endedAt: true,
+} satisfies Prisma.CallSessionSelect;
 
 type MessageRow = Prisma.MessageGetPayload<{ select: typeof MESSAGE_SELECT }>;
 type UserBriefRow = Prisma.UserGetPayload<{ select: typeof USER_BRIEF }>;
+type CallRow = Prisma.CallSessionGetPayload<{ select: typeof CALL_SELECT }>;
 
 @Injectable()
 export class ChatService {
+  /** Базовый URL для ссылки на наш стриминг треков (тот же формат, что в MusicService). */
+  private readonly appUrl: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: AccessService,
@@ -70,25 +114,35 @@ export class ChatService {
     private readonly validator: FileValidator,
     private readonly presence: PresenceService,
     private readonly realtime: RealtimeService,
-  ) {}
+    private readonly spotify: SpotifyService,
+    private readonly config: ConfigService,
+  ) {
+    this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
+  }
 
   // ─────────────── список и создание ───────────────
 
   async list(userId: string): Promise<ChatListItemDto[]> {
     const parts = await this.prisma.chatParticipant.findMany({
-      where: { userId, chat: { isGroup: false } },
+      // Групповые чаты раньше отсекались прямо здесь (`isGroup: false`) — из-за
+      // этого группа не появилась бы в списке, даже если бы её удалось создать.
+      where: { userId },
       select: {
         chatId: true,
         nickname: true,
         isMuted: true,
+        isAdmin: true,
         lastReadAt: true,
         chat: {
           select: {
             id: true,
             theme: true,
+            isGroup: true,
+            title: true,
             participants: {
               where: { userId: { not: userId } },
               select: { user: { select: USER_BRIEF } },
+              orderBy: { joinedAt: 'asc' },
             },
             messages: {
               orderBy: { sentAt: 'desc' },
@@ -100,16 +154,21 @@ export class ChatService {
       },
     });
 
-    // Собеседники — для presence одним махом.
+    // Presence считаем только для 1-на-1: у группы «онлайн собеседника» нет.
     const peerIds = parts
+      .filter((p) => !p.chat.isGroup)
       .map((p) => p.chat.participants[0]?.user.id)
       .filter((id): id is string => Boolean(id));
     const onlineMap = await this.presence.onlineMap(peerIds);
 
     const items = await Promise.all(
       parts.map(async (p) => {
-        const peer = p.chat.participants[0]?.user;
-        if (!peer) return null;
+        const others = p.chat.participants.map((x) => x.user);
+        const isGroup = p.chat.isGroup;
+        const peer = isGroup ? null : (others[0] ?? null);
+        // 1-на-1 без собеседника (аккаунт удалён) — как и раньше, не показываем.
+        if (!isGroup && !peer) return null;
+        // Группа, из которой все вышли, кроме меня, — всё равно моя группа.
 
         const last = p.chat.messages[0] ?? null;
         const unreadCount = await this.prisma.message.count({
@@ -121,10 +180,15 @@ export class ChatService {
           },
         });
 
-        const online = onlineMap.get(peer.id) ?? false;
+        const online = peer ? (onlineMap.get(peer.id) ?? false) : false;
         const item: ChatListItemDto = {
           id: p.chatId,
-          peer: this.toBrief(peer),
+          isGroup,
+          title: p.chat.title,
+          peer: peer ? this.toBrief(peer) : null,
+          participants: others.map((u) => this.toBrief(u)),
+          participantsCount: others.length + 1, // +1 — я сам
+          isAdmin: p.isAdmin,
           peerNickname: p.nickname,
           theme: p.chat.theme,
           isMuted: p.isMuted,
@@ -132,7 +196,7 @@ export class ChatService {
           lastMessageAt: last?.sentAt ?? null,
           unreadCount,
           isOnline: online,
-          lastSeenAt: online ? null : await this.presence.lastSeen(peer.id),
+          lastSeenAt: peer && !online ? await this.presence.lastSeen(peer.id) : null,
         };
         return item;
       }),
@@ -141,6 +205,222 @@ export class ChatService {
     return items
       .filter((i): i is ChatListItemDto => i !== null)
       .sort((a, b) => (b.lastMessageAt?.getTime() ?? 0) - (a.lastMessageAt?.getTime() ?? 0));
+  }
+
+  // ─────────────── групповые чаты ───────────────
+
+  /**
+   * Создать группу. Создатель — админ (единственный, кто может удалять).
+   *
+   * Группа НЕ идемпотентна, в отличие от 1-на-1: две группы с одним составом —
+   * это две разные группы (в IG так же), поэтому существующую не переиспользуем.
+   */
+  async createGroup(userId: string, dto: CreateGroupChatDto): Promise<GroupCreatedDto> {
+    const invited = [...new Set(dto.userIds)].filter((id) => id !== userId);
+    if (invited.length < GROUP_MIN_INVITES) {
+      throw new BadRequestException(
+        `Для группы нужно минимум ${GROUP_MIN_INVITES} собеседника — иначе это обычный чат 1-на-1`,
+      );
+    }
+    if (invited.length + 1 > GROUP_MAX_MEMBERS) {
+      throw new BadRequestException(`В группе максимум ${GROUP_MAX_MEMBERS} участников`);
+    }
+
+    await this.assertUsersAddable(userId, invited);
+
+    const chat = await this.prisma.chat.create({
+      data: {
+        isGroup: true,
+        title: dto.title?.trim() || null,
+        participants: {
+          create: [{ userId, isAdmin: true }, ...invited.map((id) => ({ userId: id }))],
+        },
+      },
+      select: { id: true, title: true },
+    });
+
+    const me = await this.userName(userId);
+    await this.systemMessage(chat.id, userId, `${me} создал(а) группу`);
+
+    // Группа должна появиться у всех сразу, а не после перезагрузки списка.
+    this.realtime.emitToUsers(invited, 'chat:group-created', {
+      chatId: chat.id,
+      title: chat.title,
+    });
+
+    return {
+      id: chat.id,
+      isGroup: true,
+      title: chat.title,
+      participantsCount: invited.length + 1,
+    };
+  }
+
+  /** Добавлять может ЛЮБОЙ участник группы (как в IG). */
+  async addParticipants(userId: string, chatId: number, userIds: string[]): Promise<OkDto> {
+    const { isGroup, others } = await this.loadChat(userId, chatId);
+    if (!isGroup) throw new BadRequestException('Это не групповой чат');
+
+    const current = new Set([userId, ...others.map((o) => o.id)]);
+    const toAdd = [...new Set(userIds)].filter((id) => !current.has(id));
+    if (toAdd.length === 0) throw new BadRequestException('Все уже в группе');
+    if (current.size + toAdd.length > GROUP_MAX_MEMBERS) {
+      throw new BadRequestException(`В группе максимум ${GROUP_MAX_MEMBERS} участников`);
+    }
+
+    await this.assertUsersAddable(userId, toAdd);
+
+    await this.prisma.chatParticipant.createMany({
+      data: toAdd.map((id) => ({ chatId, userId: id })),
+      skipDuplicates: true,
+    });
+
+    const me = await this.userName(userId);
+    const names = await this.userNames(toAdd);
+    await this.systemMessage(chatId, userId, `${me} добавил(а): ${names.join(', ')}`);
+
+    this.realtime.emitToUsers([...current, ...toAdd], 'chat:participants-added', {
+      chatId,
+      userIds: toAdd,
+    });
+    return { ok: true, message: `Добавлено: ${toAdd.length}` };
+  }
+
+  /** Удалять — только админ (решение пользователя). Себя удалять нельзя: для этого leave. */
+  async removeParticipant(userId: string, chatId: number, targetId: string): Promise<OkDto> {
+    const { isGroup, isAdmin, others } = await this.loadChat(userId, chatId);
+    if (!isGroup) throw new BadRequestException('Это не групповой чат');
+    if (!isAdmin) throw new ForbiddenException('Удалять участников может только админ группы');
+    if (targetId === userId) {
+      throw new BadRequestException('Себя удалить нельзя — выйдите из группы');
+    }
+    if (!others.some((o) => o.id === targetId)) {
+      throw new NotFoundException('Участник не найден в этой группе');
+    }
+
+    await this.prisma.chatParticipant.delete({
+      where: { chatId_userId: { chatId, userId: targetId } },
+    });
+
+    const me = await this.userName(userId);
+    const [name] = await this.userNames([targetId]);
+    await this.systemMessage(chatId, userId, `${me} удалил(а) ${name}`);
+
+    this.realtime.emitToUsers([userId, ...others.map((o) => o.id)], 'chat:participant-removed', {
+      chatId,
+      userId: targetId,
+    });
+    return { ok: true, message: 'Участник удалён' };
+  }
+
+  /**
+   * Выйти из группы может любой.
+   *
+   * Если вышел админ — админом становится самый давний из оставшихся: иначе
+   * группа осталась бы навсегда без того, кто может удалять участников.
+   * Последний участник вышел — группа удаляется целиком (переписка ничья).
+   */
+  async leaveGroup(userId: string, chatId: number): Promise<OkDto> {
+    const { isGroup, isAdmin, others } = await this.loadChat(userId, chatId);
+    if (!isGroup) throw new BadRequestException('Это не групповой чат');
+
+    await this.prisma.chatParticipant.delete({
+      where: { chatId_userId: { chatId, userId } },
+    });
+
+    if (others.length === 0) {
+      await this.prisma.chat.delete({ where: { id: chatId } });
+      return { ok: true, message: 'Вы вышли, группа удалена' };
+    }
+
+    if (isAdmin) {
+      const next = await this.prisma.chatParticipant.findFirst({
+        where: { chatId },
+        orderBy: { joinedAt: 'asc' },
+        select: { userId: true },
+      });
+      if (next) {
+        await this.prisma.chatParticipant.update({
+          where: { chatId_userId: { chatId, userId: next.userId } },
+          data: { isAdmin: true },
+        });
+      }
+    }
+
+    const me = await this.userName(userId);
+    await this.systemMessage(chatId, userId, `${me} вышел(ла) из группы`);
+
+    this.realtime.emitToUsers(
+      others.map((o) => o.id),
+      'chat:participant-left',
+      { chatId, userId },
+    );
+    return { ok: true, message: 'Вы вышли из группы' };
+  }
+
+  /** Переименовать группу может любой участник (как в IG). */
+  async updateGroupTitle(userId: string, chatId: number, title: string): Promise<OkDto> {
+    const { isGroup, others } = await this.loadChat(userId, chatId);
+    if (!isGroup) throw new BadRequestException('Переименовать можно только группу');
+
+    await this.prisma.chat.update({ where: { id: chatId }, data: { title: title.trim() } });
+
+    const me = await this.userName(userId);
+    await this.systemMessage(chatId, userId, `${me} переименовал(а) группу: «${title.trim()}»`);
+
+    this.realtime.emitToUsers(
+      others.map((o) => o.id),
+      'chat:group-renamed',
+      { chatId, title: title.trim() },
+    );
+    return { ok: true, message: 'Название обновлено' };
+  }
+
+  // ─── вспомогательное для групп ───
+
+  /**
+   * Кого вообще можно добавлять: живой аккаунт и нет взаимной блокировки.
+   * Блок проверяем только с тем, КТО добавляет: остальные участники сами
+   * разберутся со своими блокировками (в IG добавление тоже не спрашивает
+   * разрешения у всей группы).
+   */
+  private async assertUsersAddable(actorId: string, userIds: string[]): Promise<void> {
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: userIds }, isDeleted: false },
+      select: { id: true },
+    });
+    if (users.length !== userIds.length) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+    for (const id of userIds) {
+      await this.access.assertNotBlocked(actorId, id);
+    }
+  }
+
+  /** Служебная строка в ленте сообщений: «X добавил(а) Y». */
+  private async systemMessage(chatId: number, actorId: string, text: string): Promise<void> {
+    const message = await this.prisma.message.create({
+      data: { chatId, senderId: actorId, text, type: MsgType.SYSTEM },
+      select: MESSAGE_SELECT,
+    });
+    const peers = await this.chatPeers(chatId, actorId);
+    this.realtime.emitToUsers(peers, 'message:new', this.toMessage(message, actorId));
+  }
+
+  private async userName(userId: string): Promise<string> {
+    const u = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { userName: true },
+    });
+    return u?.userName ?? 'Пользователь';
+  }
+
+  private async userNames(userIds: string[]): Promise<string[]> {
+    const rows = await this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { userName: true },
+    });
+    return rows.map((r) => r.userName);
   }
 
   /** Идемпотентно: если чат с этим собеседником есть — возвращаем его. */
@@ -194,15 +474,40 @@ export class ChatService {
   }
 
   async detail(userId: string, chatId: number): Promise<ChatDetailDto> {
-    const { peer, part } = await this.loadChat(userId, chatId);
-    const online = await this.presence.isOnline(peer.id);
+    const { peer, otherParts, isGroup, title, isAdmin, part } = await this.loadChat(userId, chatId);
+
+    // Присутствие всех участников — ОДНИМ запросом в Redis (onlineMap), а не по
+    // одному на человека: в группе на 32 человека это было бы 32 похода подряд.
+    const ids = otherParts.map((p) => p.user.id);
+    const onlineMap = await this.presence.onlineMap(ids);
+
+    const participants = await Promise.all(
+      otherParts.map(async (p) => {
+        const isOnline = onlineMap.get(p.user.id) ?? false;
+        return {
+          ...this.toBrief(p.user),
+          nickname: p.nickname,
+          isAdmin: p.isAdmin,
+          isOnline,
+          // «был(а) в сети …» нужен только для тех, кто сейчас офлайн.
+          lastSeenAt: isOnline ? null : await this.presence.lastSeen(p.user.id),
+        };
+      }),
+    );
+
+    const online = peer ? (onlineMap.get(peer.id) ?? false) : false;
     return {
       id: chatId,
-      peer: this.toBrief(peer),
+      isGroup,
+      title,
+      peer: peer ? this.toBrief(peer) : null,
+      participants,
+      participantsCount: otherParts.length + 1,
+      isAdmin,
       theme: part.chat.theme,
       isMuted: part.isMuted,
       isOnline: online,
-      lastSeenAt: online ? null : await this.presence.lastSeen(peer.id),
+      lastSeenAt: peer && !online ? await this.presence.lastSeen(peer.id) : null,
     };
   }
 
@@ -230,11 +535,14 @@ export class ChatService {
     file?: UploadedFile,
   ): Promise<MessageDto> {
     const { peer } = await this.loadChat(userId, chatId);
-    await this.access.assertNotBlocked(userId, peer.id);
+    // Блокировка — понятие пары. В группе блок одного участника не должен
+    // затыкать весь чат остальным, поэтому проверяем только 1-на-1.
+    if (peer) await this.access.assertNotBlocked(userId, peer.id);
 
     let type: MsgType = MsgType.TEXT;
     let mediaUrl: string | null = null;
     let duration: number | null = null;
+    let musicId: number | null = null;
 
     if (file) {
       const validated = await this.validator.validate(file);
@@ -254,8 +562,11 @@ export class ChatService {
       mediaUrl = dto.stickerUrl;
     } else if (dto.sharedPostId) {
       type = MsgType.POST_SHARE;
+    } else if (dto.musicId || dto.spotifyId) {
+      type = MsgType.MUSIC_SHARE;
+      musicId = await this.resolveMusicId(dto);
     } else if (!dto.text?.trim()) {
-      throw new BadRequestException('Пустое сообщение: нужен text, файл, стикер или пост');
+      throw new BadRequestException('Пустое сообщение: нужен text, файл, стикер, пост или трек');
     }
 
     if (dto.replyToId) {
@@ -278,14 +589,37 @@ export class ChatService {
         duration,
         replyToId: dto.replyToId ?? null,
         sharedPostId: dto.sharedPostId ?? null,
+        musicId,
       },
       select: MESSAGE_SELECT,
     });
 
     const dtoOut = this.toMessage(message, userId);
-    // Мгновенная доставка собеседнику (и в другие мои вкладки).
-    this.realtime.emitToUsers([peer.id], 'message:new', dtoOut);
+    // Доставка ВСЕМ участникам, а не одному собеседнику: в группе из пяти
+    // человек прежний `[peer.id]` доставлял сообщение ровно одному, остальные
+    // увидели бы его только после перезагрузки чата.
+    this.realtime.emitToUsers(await this.chatPeers(chatId, userId), 'message:new', dtoOut);
     return dtoOut;
+  }
+
+  /**
+   * Какой Music.id прикрепить к сообщению.
+   *
+   * `musicId` — трек уже в нашей библиотеке. `spotifyId` — трека у нас может не
+   * быть: тащим его из Spotify (upsert, повтор не плодит строки). Импорт НЕ
+   * добавляет трек в «сохранённые» отправителя — поделиться и сохранить это
+   * разные вещи.
+   */
+  private async resolveMusicId(dto: SendMessageDto): Promise<number> {
+    if (dto.musicId) {
+      const row = await this.prisma.music.findUnique({
+        where: { id: dto.musicId },
+        select: { id: true },
+      });
+      if (!row) throw new NotFoundException('Трек не найден');
+      return row.id;
+    }
+    return this.spotify.ensureImported(dto.spotifyId as string);
   }
 
   /** Редактировать можно ≤15 минут и только своё. */
@@ -526,50 +860,283 @@ export class ChatService {
   // ─────────────── звонок ───────────────
 
   async startCall(userId: string, chatId: number, type: CallType): Promise<CallStartedDto> {
-    const { peer } = await this.loadChat(userId, chatId);
-    await this.access.assertNotBlocked(userId, peer.id);
+    const { peer, others } = await this.loadChat(userId, chatId);
+    // Блок — понятие пары: проверяем только в 1-на-1 (в группе звоним всем).
+    if (peer) await this.access.assertNotBlocked(userId, peer.id);
 
     const call = await this.prisma.callSession.create({
       data: { chatId, callerId: userId, type },
       select: { id: true, type: true, status: true },
     });
 
-    // Оповещаем собеседника — дальше SDP/ICE идут через сокет (call:offer и т.д.).
-    this.realtime.emitToUsers([peer.id], 'call:incoming', {
-      callId: call.id,
-      chatId,
-      type,
-      fromUserId: userId,
-    });
+    // Звоним ВСЕМ участникам: в группе звонок должен звенеть у каждого, а не у
+    // одного. Дальше SDP/ICE идут через сокет (call:offer и т.д.) — сигналинг
+    // уже рассылается по всем участникам чата.
+    this.realtime.emitToUsers(
+      others.map((o) => o.id),
+      'call:incoming',
+      {
+        callId: call.id,
+        chatId,
+        type,
+        fromUserId: userId,
+      },
+    );
 
     return { callId: call.id, chatId, type: call.type, status: call.status };
   }
 
+  /**
+   * Взять трубку. Длительность считается от `answeredAt`, а не от `startedAt`:
+   * время, пока телефон звонил, разговором не является.
+   */
+  async answerCall(userId: string, callId: string): Promise<CallStateDto> {
+    const call = await this.loadCallForParticipant(userId, callId);
+    if (call.callerId === userId) {
+      throw new BadRequestException('Нельзя ответить на собственный звонок');
+    }
+    if (call.status !== CallStatus.RINGING) {
+      throw new BadRequestException(`Звонок уже не звонит (${call.status})`);
+    }
+
+    const updated = await this.prisma.callSession.update({
+      where: { id: callId },
+      data: { status: CallStatus.ONGOING, answeredAt: new Date() },
+      select: CALL_SELECT,
+    });
+
+    // Всем участникам, включая звонящего: у него должно погаснуть «идёт вызов»,
+    // а на других устройствах ответившего — исчезнуть входящий.
+    this.realtime.emitToUsers(await this.callAudience(call.chatId, null), 'call:answered', {
+      callId,
+      chatId: call.chatId,
+      byUserId: userId,
+    });
+    return this.toCallState(updated);
+  }
+
+  /** Отклонить (нажать «сбросить»). Звонившему — call:declined, в чат — строка. */
+  async declineCall(userId: string, callId: string): Promise<CallStateDto> {
+    const call = await this.loadCallForParticipant(userId, callId);
+    if (call.callerId === userId) {
+      throw new BadRequestException('Свой звонок нужно завершать, а не отклонять');
+    }
+    if (call.status !== CallStatus.RINGING) {
+      throw new BadRequestException(`Звонок уже не звонит (${call.status})`);
+    }
+
+    const updated = await this.prisma.callSession.update({
+      where: { id: callId },
+      data: { status: CallStatus.DECLINED, endedAt: new Date() },
+      select: CALL_SELECT,
+    });
+    await this.callMessage(call.chatId, call.callerId, callId);
+
+    this.realtime.emitToUsers(await this.callAudience(call.chatId, null), 'call:declined', {
+      callId,
+      chatId: call.chatId,
+      byUserId: userId,
+    });
+    return this.toCallState(updated);
+  }
+
+  /**
+   * Завершить звонок. Может любой участник.
+   *
+   * Ключевая развилка: если трубку так и не взяли (status ещё RINGING), это
+   * **MISSED**, а не ENDED — иначе пропущенный звонок выглядел бы в истории как
+   * разговор длиной ноль секунд, и «пропущенных» не существовало бы вовсе.
+   */
+  async endCall(userId: string, callId: string): Promise<CallStateDto> {
+    const call = await this.loadCallForParticipant(userId, callId);
+    if (call.status === CallStatus.ENDED || call.status === CallStatus.MISSED) {
+      // Идемпотентно: обе стороны часто шлют «end» одновременно.
+      return this.toCallState(await this.loadCall(callId));
+    }
+    if (call.status === CallStatus.DECLINED) return this.toCallState(await this.loadCall(callId));
+
+    const missed = call.status === CallStatus.RINGING;
+    const updated = await this.prisma.callSession.update({
+      where: { id: callId },
+      data: {
+        status: missed ? CallStatus.MISSED : CallStatus.ENDED,
+        endedAt: new Date(),
+      },
+      select: CALL_SELECT,
+    });
+    await this.callMessage(call.chatId, call.callerId, callId);
+
+    this.realtime.emitToUsers(await this.callAudience(call.chatId, null), 'call:ended', {
+      callId,
+      chatId: call.chatId,
+      byUserId: userId,
+      status: updated.status,
+    });
+    return this.toCallState(updated);
+  }
+
+  /** История звонков чата (в IG она же — строки в переписке). */
+  async calls(userId: string, chatId: number, dto: CursorDto): Promise<CursorPage<CallStateDto>> {
+    await this.loadChat(userId, chatId);
+    const rows = await this.prisma.callSession.findMany({
+      where: { chatId },
+      select: CALL_SELECT,
+      orderBy: { startedAt: 'desc' },
+      take: dto.limit + 1,
+      ...(dto.cursor ? { cursor: { id: dto.cursor }, skip: 1 } : {}),
+    });
+    const page = buildCursorPage(rows, dto.limit, (r) => r.id);
+    return { ...page, items: page.items.map((c) => this.toCallState(c)) };
+  }
+
+  /**
+   * ICE-серверы для WebRTC. Без TURN звонок разваливается, как только оба
+   * абонента за NAT (мобильные сети, симметричный NAT — большинство реальных
+   * случаев): STUN лишь подсказывает внешний адрес, а ретранслировать трафик
+   * умеет только TURN. Держим список на сервере, а не в коде фронта, чтобы
+   * менять учётки TURN без пересборки клиента.
+   *
+   * Учётки TURN — «долгоживущие» из .env. Если TURN не настроен, честно отдаём
+   * только STUN: пусть фронт знает, что звонок между NAT'ами может не собраться.
+   */
+  iceServers(): IceServersDto {
+    const stun = (this.config.get<string>('STUN_URLS') ?? 'stun:stun.l.google.com:19302')
+      .split(',')
+      .map((u) => u.trim())
+      .filter(Boolean);
+
+    const servers: IceServerDto[] = [{ urls: stun }];
+
+    const turnUrls = (this.config.get<string>('TURN_URLS') ?? '')
+      .split(',')
+      .map((u) => u.trim())
+      .filter(Boolean);
+    const username = this.config.get<string>('TURN_USERNAME');
+    const credential = this.config.get<string>('TURN_PASSWORD');
+
+    if (turnUrls.length > 0 && username && credential) {
+      servers.push({ urls: turnUrls, username, credential });
+    }
+
+    return { iceServers: servers, hasTurn: turnUrls.length > 0 && !!username && !!credential };
+  }
+
+  // ─── вспомогательное для звонков ───
+
+  private async loadCall(callId: string): Promise<CallRow> {
+    const call = await this.prisma.callSession.findUnique({
+      where: { id: callId },
+      select: CALL_SELECT,
+    });
+    if (!call) throw new NotFoundException('Звонок не найден');
+    return call;
+  }
+
+  /** Звонок + проверка, что я вообще в этом чате (иначе чужой звонок можно было бы сбросить). */
+  private async loadCallForParticipant(userId: string, callId: string): Promise<CallRow> {
+    const call = await this.loadCall(callId);
+    await this.loadChat(userId, call.chatId);
+    return call;
+  }
+
+  private async callAudience(chatId: number, exceptUserId: string | null): Promise<string[]> {
+    const parts = await this.prisma.chatParticipant.findMany({
+      where: { chatId, ...(exceptUserId ? { userId: { not: exceptUserId } } : {}) },
+      select: { userId: true },
+    });
+    return parts.map((p) => p.userId);
+  }
+
+  /** Строка о звонке в переписке — как в IG («Аудиозвонок, 5:32» / «Пропущенный»). */
+  private async callMessage(chatId: number, callerId: string, callId: string): Promise<void> {
+    const message = await this.prisma.message.create({
+      data: { chatId, senderId: callerId, type: MsgType.CALL, callId },
+      select: MESSAGE_SELECT,
+    });
+    this.realtime.emitToUsers(
+      await this.callAudience(chatId, null),
+      'message:new',
+      this.toMessage(message, callerId),
+    );
+  }
+
+  private toCallState(c: CallRow): CallStateDto {
+    return {
+      callId: c.id,
+      chatId: c.chatId,
+      callerId: c.callerId,
+      type: c.type,
+      status: c.status,
+      startedAt: c.startedAt,
+      answeredAt: c.answeredAt,
+      endedAt: c.endedAt,
+      durationSec: this.callDuration(c),
+    };
+  }
+
+  /** Разговор — от «взяли трубку» до «положили». Не дозвонились → 0. */
+  private callDuration(c: { answeredAt: Date | null; endedAt: Date | null }): number {
+    if (!c.answeredAt || !c.endedAt) return 0;
+    return Math.max(0, Math.round((c.endedAt.getTime() - c.answeredAt.getTime()) / 1000));
+  }
+
   // ─────────────── helpers ───────────────
 
+  /**
+   * Чат, в котором я состою. Одна дверь и для 1-на-1, и для группы.
+   *
+   * `peer` есть только у 1-на-1 — в группе «собеседника» не существует, там
+   * `others`. Раньше метод жёстко требовал peer и падал «Собеседник не найден»,
+   * из-за чего групповой чат был невозможен в принципе.
+   */
   private async loadChat(
     userId: string,
     chatId: number,
-  ): Promise<{ peer: UserBriefRow; part: { isMuted: boolean; chat: { theme: string } } }> {
+  ): Promise<{
+    isGroup: boolean;
+    title: string | null;
+    peer: UserBriefRow | null;
+    others: UserBriefRow[];
+    otherParts: { nickname: string | null; isAdmin: boolean; user: UserBriefRow }[];
+    isAdmin: boolean;
+    part: { isMuted: boolean; chat: { theme: string } };
+  }> {
     const part = await this.prisma.chatParticipant.findUnique({
       where: { chatId_userId: { chatId, userId } },
       select: {
         isMuted: true,
+        isAdmin: true,
         chat: {
           select: {
             theme: true,
+            isGroup: true,
+            title: true,
             participants: {
               where: { userId: { not: userId } },
-              select: { user: { select: USER_BRIEF } },
+              select: { nickname: true, isAdmin: true, user: { select: USER_BRIEF } },
+              orderBy: { joinedAt: 'asc' },
             },
           },
         },
       },
     });
     if (!part) throw new NotFoundException('Чат не найден');
-    const peer = part.chat.participants[0]?.user;
-    if (!peer) throw new NotFoundException('Собеседник не найден');
-    return { peer, part: { isMuted: part.isMuted, chat: { theme: part.chat.theme } } };
+
+    const otherParts = part.chat.participants;
+    const others = otherParts.map((p) => p.user);
+    const isGroup = part.chat.isGroup;
+    // В 1-на-1 без собеседника делать нечего (аккаунт удалён) — это 404, как и было.
+    if (!isGroup && others.length === 0) throw new NotFoundException('Собеседник не найден');
+
+    return {
+      isGroup,
+      title: part.chat.title,
+      peer: isGroup ? null : others[0],
+      others,
+      otherParts,
+      isAdmin: part.isAdmin,
+      part: { isMuted: part.isMuted, chat: { theme: part.chat.theme } },
+    };
   }
 
   private async loadMessageInMyChat(
@@ -617,12 +1184,47 @@ export class ChatService {
       replyToId: m.replyToId,
       sharedPostId: m.sharedPostId,
       noteSnapshot: m.noteSnapshot,
+      music: m.isDeleted ? null : this.toMessageMusic(m.music),
+      call: m.call
+        ? {
+            id: m.call.id,
+            type: m.call.type,
+            status: m.call.status,
+            durationSec: this.callDuration(m.call),
+          }
+        : null,
       reactions: m.reactions,
       editedAt: m.editedAt,
       isDeleted: m.isDeleted,
       // Прочитано, если собеседник (не я) отметил.
       isRead: m.senderId === viewerId && m.reads.some((r) => r.userId !== viewerId),
       sentAt: m.sentAt,
+    };
+  }
+
+  /**
+   * Трек в сообщении. Честно разделяем «играется целиком» и «только превью».
+   *
+   * Признак — НЕ происхождение трека, а есть ли у нас сам файл:
+   * `keyFromUrl` возвращает ключ, только если url указывает в наш S3. Спервоначала
+   * тут стояло `spotifyId === null`, и это было неверно: трек, пришедший из Spotify,
+   * но чей полный mp3 позже залили через `npm run music:import` (upsert по
+   * spotifyId переписывает url на ключ S3), продолжал бы отдаваться как
+   * «30 секунд», хотя файл уже лежит. Теперь такой трек играет целиком сам собой.
+   */
+  private toMessageMusic(m: MessageRow['music']): MessageMusicDto | null {
+    if (!m) return null;
+    const isFullTrack = this.storage.keyFromUrl(m.url) !== null;
+    return {
+      id: m.id,
+      title: m.title,
+      artist: m.artist,
+      coverUrl: m.coverUrl,
+      duration: m.duration,
+      streamUrl: isFullTrack ? `${this.appUrl}/api/music/${m.id}/stream` : null,
+      previewUrl: m.url,
+      spotifyId: m.spotifyId,
+      isFullTrack,
     };
   }
 

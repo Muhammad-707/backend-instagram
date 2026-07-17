@@ -268,7 +268,15 @@ export class ProfileService {
           orderBy: { createdAt: 'desc' },
           take: 1,
           select: {
-            post: { select: { media: { select: { url: true, thumbUrl: true }, orderBy: { order: 'asc' }, take: 1 } } },
+            post: {
+              select: {
+                media: {
+                  select: { url: true, thumbUrl: true },
+                  orderBy: { order: 'asc' },
+                  take: 1,
+                },
+              },
+            },
           },
         },
       },

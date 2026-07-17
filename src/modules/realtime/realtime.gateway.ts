@@ -136,12 +136,58 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     await this.relayTyping(client, chatId, false);
   }
 
+  /**
+   * «X печатает…» — с аватаром и именем, а не одним userId.
+   *
+   * Раньше уходил голый `{chatId, userId}`: в группе на 10 человек фронту
+   * пришлось бы отдельно ходить за профилем по UUID, чтобы показать плашку —
+   * то есть запрос в момент, когда нужно отрисовать мгновенно. Поле `nickname`
+   * — это лакаб участника в ЭТОМ чате (`ChatParticipant.nickname`).
+   *
+   * `displayName` считаем на сервере, чтобы чат и группа показывали человека
+   * одинаково: имя → если имени нет, лакаб → в крайнем случае @userName.
+   */
   private async relayTyping(client: AuthedSocket, chatId: number, typing: boolean): Promise<void> {
     if (!client.userId) return;
     const peers = await this.chatPeers(chatId, client.userId);
-    this.realtime.emitToUsers(peers, typing ? 'typing:start' : 'typing:stop', {
+    if (peers.length === 0) return;
+
+    // typing:stop — плашку просто снять, лишний запрос в БД не нужен.
+    if (!typing) {
+      this.realtime.emitToUsers(peers, 'typing:stop', { chatId, userId: client.userId });
+      return;
+    }
+
+    const part = await this.prisma.chatParticipant.findUnique({
+      where: { chatId_userId: { chatId, userId: client.userId } },
+      select: {
+        nickname: true,
+        user: {
+          select: {
+            id: true,
+            userName: true,
+            fullName: true,
+            isVerified: true,
+            profile: { select: { avatarUrl: true } },
+          },
+        },
+      },
+    });
+    if (!part) return;
+
+    const u = part.user;
+    this.realtime.emitToUsers(peers, 'typing:start', {
       chatId,
-      userId: client.userId,
+      userId: u.id,
+      user: {
+        id: u.id,
+        userName: u.userName,
+        fullName: u.fullName,
+        avatarUrl: u.profile?.avatarUrl ?? null,
+        isVerified: u.isVerified,
+        nickname: part.nickname,
+        displayName: u.fullName?.trim() || part.nickname || u.userName,
+      },
     });
   }
 
@@ -203,7 +249,25 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     );
   }
 
+  /**
+   * Собеседники по чату — но ТОЛЬКО если отправитель сам в этом чате.
+   *
+   * Без проверки членства сокет верил `chatId` из payload'а на слово: любой
+   * авторизованный юзер слал `call:offer` с чужим chatId, и сервер послушно
+   * доставлял SDP участникам чужого чата (проверено живьём: sitora не в чате
+   * eraj↔daler, но daler получил её offer). То же самое давало фальшивый
+   * «печатает…» в любом чате. JWT отвечает «кто ты», но не «твой ли это чат» —
+   * это разные вопросы, и второй нужно задавать явно.
+   *
+   * Пустой список = сигнал молча никуда не уходит (сокет-ивенты без ответа).
+   */
   private async chatPeers(chatId: number, exceptUserId: string): Promise<string[]> {
+    const isMember = await this.prisma.chatParticipant.findFirst({
+      where: { chatId, userId: exceptUserId },
+      select: { userId: true },
+    });
+    if (!isMember) return [];
+
     const parts = await this.prisma.chatParticipant.findMany({
       where: { chatId, userId: { not: exceptUserId } },
       select: { userId: true },

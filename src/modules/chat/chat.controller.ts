@@ -21,6 +21,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiQuery,
+  ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { CallType } from '@prisma/client';
@@ -30,14 +31,20 @@ import { CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { UploadedFile as MulterFile } from '../../storage/storage.types';
 import { ChatService } from './chat.service';
 import {
+  AddParticipantsDto,
   BulkDeleteDto,
   CallStartedDto,
+  CallStateDto,
   ChatCreatedDto,
   ChatDetailDto,
   ChatListItemDto,
   CreateChatDto,
+  CreateGroupChatDto,
   DeletedCountDto,
   EditMessageDto,
+  GroupCreatedDto,
+  IceServersDto,
+  UpdateGroupTitleDto,
   MessageDto,
   MessageRequestItemDto,
   MuteDto,
@@ -75,6 +82,154 @@ export class ChatController {
     @Body() dto: CreateChatDto,
   ): Promise<ChatCreatedDto> {
     return this.chatService.createOrGet(userId, dto.receiverUserId);
+  }
+
+  // ─── группы: 'group' — ДО ':id', иначе параметр перехватит путь ───
+
+  @Post('group')
+  @ApiOperation({
+    summary: 'Создать групповой чат',
+    description:
+      'Создатель становится админом группы. Минимум 2 собеседника (иначе это обычный чат 1-на-1), ' +
+      'максимум 32 участника. В отличие от 1-на-1, НЕ идемпотентно: две группы с одним составом — разные группы.',
+  })
+  @ApiCreatedResponse({ type: GroupCreatedDto })
+  @ApiResponse({ status: 400, description: 'Меньше 2 собеседников / больше 32 участников' })
+  async createGroup(
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateGroupChatDto,
+  ): Promise<GroupCreatedDto> {
+    return this.chatService.createGroup(userId, dto);
+  }
+
+  @Post(':id/participants')
+  @ApiOperation({
+    summary: 'Добавить участников в группу',
+    description: 'Добавлять может любой участник группы (как в IG).',
+  })
+  @ApiOkResponse({ type: OkDto })
+  async addParticipants(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) chatId: number,
+    @Body() dto: AddParticipantsDto,
+  ): Promise<OkDto> {
+    return this.chatService.addParticipants(userId, chatId, dto.userIds);
+  }
+
+  @Delete(':id/participants/:userId')
+  @ApiOperation({
+    summary: 'Удалить участника из группы',
+    description:
+      'Только админ (создатель группы). Себя удалить нельзя — для этого выход из группы.',
+  })
+  @ApiOkResponse({ type: OkDto })
+  @ApiResponse({ status: 403, description: 'Вы не админ группы' })
+  async removeParticipant(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) chatId: number,
+    @Param('userId') targetId: string,
+  ): Promise<OkDto> {
+    return this.chatService.removeParticipant(userId, chatId, targetId);
+  }
+
+  @Post(':id/leave')
+  @ApiOperation({
+    summary: 'Выйти из группы',
+    description:
+      'Может любой участник. Если вышел админ — админом становится самый давний из оставшихся. ' +
+      'Вышел последний — группа удаляется.',
+  })
+  @ApiOkResponse({ type: OkDto })
+  async leaveGroup(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) chatId: number,
+  ): Promise<OkDto> {
+    return this.chatService.leaveGroup(userId, chatId);
+  }
+
+  @Put(':id/title')
+  @ApiOperation({
+    summary: 'Переименовать группу',
+    description: 'Может любой участник (как в IG).',
+  })
+  @ApiOkResponse({ type: OkDto })
+  async updateGroupTitle(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) chatId: number,
+    @Body() dto: UpdateGroupTitleDto,
+  ): Promise<OkDto> {
+    return this.chatService.updateGroupTitle(userId, chatId, dto.title);
+  }
+
+  // ─── звонки: 'calls/...' — ДО ':id' ───
+
+  /**
+   * ICE-серверы для WebRTC. Отдаём с сервера, а не хардкодим во фронте: учётки
+   * TURN меняются, а без TURN звонок между двумя NAT (мобильный интернет) просто
+   * не соберётся — STUN один этого не решает.
+   */
+  @Get('calls/ice-servers')
+  @ApiOperation({
+    summary: 'ICE-серверы (STUN/TURN) для WebRTC',
+    description:
+      'Отдать как есть в `new RTCPeerConnection({ iceServers })`. ' +
+      '`hasTurn: false` — TURN не настроен, звонок между NAT может не соединиться.',
+  })
+  @ApiOkResponse({ type: IceServersDto })
+  iceServers(): IceServersDto {
+    return this.chatService.iceServers();
+  }
+
+  @Post('calls/:callId/answer')
+  @ApiOperation({
+    summary: 'Взять трубку',
+    description: 'RINGING → ONGOING. Длительность считается от этого момента.',
+  })
+  @ApiOkResponse({ type: CallStateDto })
+  async answerCall(
+    @CurrentUser('id') userId: string,
+    @Param('callId') callId: string,
+  ): Promise<CallStateDto> {
+    return this.chatService.answerCall(userId, callId);
+  }
+
+  @Post('calls/:callId/decline')
+  @ApiOperation({
+    summary: 'Сбросить входящий',
+    description: 'RINGING → DECLINED + строка в чате.',
+  })
+  @ApiOkResponse({ type: CallStateDto })
+  async declineCall(
+    @CurrentUser('id') userId: string,
+    @Param('callId') callId: string,
+  ): Promise<CallStateDto> {
+    return this.chatService.declineCall(userId, callId);
+  }
+
+  @Post('calls/:callId/end')
+  @ApiOperation({
+    summary: 'Завершить звонок',
+    description:
+      'ONGOING → ENDED (+ длительность). Если трубку так и не взяли — MISSED (пропущенный), ' +
+      'а не разговор нулевой длины. Идемпотентно: обе стороны часто шлют end одновременно.',
+  })
+  @ApiOkResponse({ type: CallStateDto })
+  async endCall(
+    @CurrentUser('id') userId: string,
+    @Param('callId') callId: string,
+  ): Promise<CallStateDto> {
+    return this.chatService.endCall(userId, callId);
+  }
+
+  @Get(':id/calls')
+  @ApiOperation({ summary: 'История звонков чата (курсорная)' })
+  @ApiOkResponse({ type: [CallStateDto] })
+  async calls(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) chatId: number,
+    @Query() dto: CursorDto,
+  ): Promise<CursorPage<CallStateDto>> {
+    return this.chatService.calls(userId, chatId, dto);
   }
 
   // ─── сообщения: пути 'messages/...' и 'requests/...' — ДО ':id' ───

@@ -62,7 +62,12 @@ export class MusicController {
     summary: 'Стриминг mp3 с поддержкой Range (перемотка)',
     description:
       'Без Range → 200 и весь файл. С Range → 206 Partial Content + Content-Range. ' +
-      'Плеер в браузере всегда шлёт Range — без 206 перемотка не работает.',
+      'Плеер в браузере всегда шлёт Range — без 206 перемотка не работает. ' +
+      'Токен не нужен: роут публичный.',
+    // `security: []` снимает @ApiBearerAuth() уровня контроллера именно с этого
+    // роута. Иначе Swagger рисует 🔒 на публичном endpoint'е (баг #24) — а по
+    // правилу проекта схема не имеет права врать о доступе.
+    security: [],
   })
   @ApiParam({ name: 'id', example: 1 })
   @ApiHeader({ name: 'Range', required: false, example: 'bytes=0-1023' })

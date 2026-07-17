@@ -1,6 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { NoteAudience } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 import { UserBriefDto } from '../../users/dto/users.dto';
 
 export const NOTE_TEXT_MAX = 60;
@@ -12,16 +21,36 @@ export class CreateNoteDto {
   @MaxLength(NOTE_TEXT_MAX, { message: `text: максимум ${NOTE_TEXT_MAX} символов` })
   text!: string;
 
-  @ApiPropertyOptional({ example: 35 })
+  @ApiPropertyOptional({ example: 35, description: 'Трек из нашей библиотеки' })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   musicId?: number;
 
+  @ApiPropertyOptional({
+    example: '11dFghVXANMlKmJXsNCbNl',
+    description:
+      'Трек прямо из Spotify (id из /spotify/search) — импортируем в Music и прикрепим ' +
+      'вместе с обложкой и названием. Не добавляет трек в «сохранённые».',
+  })
+  @IsOptional()
+  @IsString()
+  spotifyId?: string;
+
   @ApiPropertyOptional({ example: '#FFB6C1', description: 'Цвет фона заметки (hex)' })
   @IsOptional()
   @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'bgColor: hex-цвет вида #RRGGBB' })
   bgColor?: string;
+
+  @ApiPropertyOptional({
+    enum: NoteAudience,
+    default: NoteAudience.FOLLOWERS,
+    description:
+      'Кому видна заметка: FOLLOWERS — всем подписчикам, CLOSE_FRIENDS — только близким друзьям.',
+  })
+  @IsOptional()
+  @IsEnum(NoteAudience)
+  audience?: NoteAudience;
 }
 
 export class UpdateNoteDto {
@@ -63,11 +92,30 @@ export class NoteMusicDto {
   @ApiProperty({ example: 'SoundHelix' })
   artist!: string;
 
-  @ApiProperty()
-  streamUrl!: string;
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description:
+      'Наш стриминг с Range — только у локальных mp3. У треков из Spotify null: ' +
+      'полного файла у нас нет, Spotify его не отдаёт.',
+  })
+  streamUrl?: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description: 'Что реально играет: наш mp3 либо 30-сек preview из Spotify.',
+  })
+  previewUrl?: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'Обложка альбома' })
+  coverUrl?: string | null;
 
   @ApiPropertyOptional({ type: String, nullable: true })
-  coverUrl?: string | null;
+  spotifyId?: string | null;
+
+  @ApiProperty({ example: true, description: 'true — играется целиком; false — только превью' })
+  isFullTrack!: boolean;
 }
 
 export class NoteDto {
@@ -85,6 +133,13 @@ export class NoteDto {
 
   @ApiPropertyOptional({ type: String, nullable: true, example: '#FFB6C1' })
   bgColor?: string | null;
+
+  @ApiProperty({
+    enum: NoteAudience,
+    example: NoteAudience.FOLLOWERS,
+    description: 'Кому видна: подписчикам или только близким друзьям',
+  })
+  audience!: NoteAudience;
 
   @ApiProperty({ example: 2 })
   likesCount!: number;

@@ -190,7 +190,11 @@ export class PostBriefDto {
   @ApiProperty({ example: false })
   isReel!: boolean;
 
-  @ApiPropertyOptional({ type: String, nullable: true, description: 'Первое медиа — обложка в сетке' })
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description: 'Первое медиа — обложка в сетке',
+  })
   coverUrl?: string | null;
 
   @ApiProperty({ example: 24 })
@@ -251,7 +255,10 @@ export class AvatarDto {
 }
 
 export class CollectionDto {
-  @ApiProperty({ example: 'Путешествия', description: 'Имя коллекции — оно же ключ при сохранении' })
+  @ApiProperty({
+    example: 'Путешествия',
+    description: 'Имя коллекции — оно же ключ при сохранении',
+  })
   name!: string;
 
   @ApiProperty({ example: 7 })

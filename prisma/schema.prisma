@@ -70,6 +70,11 @@ enum MsgType {
   NOTE_REPLY
   CALL
   LIVE_INVITE
+  // Служебная строка в групповом чате: «X добавил Y», «X вышел».
+  // senderId — тот, кто совершил действие; text — готовая фраза.
+  SYSTEM
+  // Трек, отправленный в чат (наш mp3 или импортированный из Spotify).
+  MUSIC_SHARE
 }
 
 enum RequestStatus {
@@ -444,10 +449,11 @@ model Music {
   spotifyId  String?  @unique
   createdAt  DateTime @default(now())
 
-  posts   Post[]
-  stories Story[]
-  notes   Note[]
-  savedBy SavedMusic[]
+  posts    Post[]
+  stories  Story[]
+  notes    Note[]
+  savedBy  SavedMusic[]
+  messages Message[]    @relation("MusicOfMessage")
 
   @@index([title])
   @@index([artist])
@@ -743,13 +749,22 @@ model HighlightStory {
 // ЗАМЕТКИ v2 (TZ_LIVE_NOTES ЧАСТЬ A)
 // ============================================================
 
+/// Кому видна заметка — тот же выбор, что в IG при публикации.
+enum NoteAudience {
+  /// Все мои подписчики (принятые).
+  FOLLOWERS
+  /// Только «близкие друзья» (CloseFriend).
+  CLOSE_FRIENDS
+}
+
 model Note {
-  id        Int      @id @default(autoincrement())
+  id        Int          @id @default(autoincrement())
   userId    String
-  text      String?  @db.VarChar(60)
+  text      String?      @db.VarChar(60)
   musicId   Int?
   bgColor   String?
-  createdAt DateTime @default(now())
+  audience  NoteAudience @default(FOLLOWERS)
+  createdAt DateTime     @default(now())
   expiresAt DateTime
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -814,6 +829,10 @@ model ChatParticipant {
   isMuted    Boolean   @default(false)
   lastReadAt DateTime?
   joinedAt   DateTime  @default(now())
+  // Создатель группы. Админ может удалять участников; обычный участник —
+  // только добавлять и выйти сам (решение пользователя, как в IG).
+  // В 1-на-1 не используется: там удалять некого.
+  isAdmin    Boolean   @default(false)
 
   chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -834,18 +853,22 @@ model Message {
   sharedPostId Int?
   storyId      Int?
   noteId       Int?
+  musicId      Int? // трек, отправленный в чат (type=MUSIC_SHARE)
+  callId       String? // звонок, к которому относится строка (type=CALL)
   noteSnapshot String?   @db.VarChar(60) // заметка умрёт через 24ч — превью в чате не должно сломаться
   editedAt     DateTime?
   isDeleted    Boolean   @default(false)
   sentAt       DateTime  @default(now())
 
-  chat       Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  sender     User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  replyTo    Message?  @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies    Message[] @relation("MessageReplies")
-  sharedPost Post?     @relation("SharedPost", fields: [sharedPostId], references: [id], onDelete: SetNull)
-  story      Story?    @relation("StoryOfMessage", fields: [storyId], references: [id], onDelete: SetNull)
-  note       Note?     @relation("NoteOfMessage", fields: [noteId], references: [id], onDelete: SetNull)
+  chat       Chat         @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender     User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo    Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies    Message[]    @relation("MessageReplies")
+  sharedPost Post?        @relation("SharedPost", fields: [sharedPostId], references: [id], onDelete: SetNull)
+  story      Story?       @relation("StoryOfMessage", fields: [storyId], references: [id], onDelete: SetNull)
+  note       Note?        @relation("NoteOfMessage", fields: [noteId], references: [id], onDelete: SetNull)
+  music      Music?       @relation("MusicOfMessage", fields: [musicId], references: [id], onDelete: SetNull)
+  call       CallSession? @relation("CallOfMessage", fields: [callId], references: [id], onDelete: SetNull)
 
   reactions MessageReaction[]
   reads     MessageRead[]
@@ -901,16 +924,22 @@ model MessageRequest {
 }
 
 model CallSession {
-  id        String     @id @default(uuid())
-  chatId    Int
-  callerId  String
-  type      CallType
-  status    CallStatus @default(RINGING)
-  startedAt DateTime   @default(now())
-  endedAt   DateTime?
+  id         String     @id @default(uuid())
+  chatId     Int
+  callerId   String
+  type       CallType
+  status     CallStatus @default(RINGING)
+  /// Момент ответа. Длительность считается от него, а не от startedAt:
+  /// время, пока телефон звонил, разговором не является.
+  answeredAt DateTime?
+  startedAt  DateTime   @default(now())
+  endedAt    DateTime?
 
   chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
   caller User @relation(fields: [callerId], references: [id], onDelete: Cascade)
+
+  /// Строка в переписке («Аудиозвонок, 5:32» / «Пропущенный»).
+  messages Message[] @relation("CallOfMessage")
 
   @@index([chatId, startedAt])
 }

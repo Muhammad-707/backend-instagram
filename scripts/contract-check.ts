@@ -11,6 +11,7 @@
  * Запуск: npx ts-node scripts/contract-check.ts
  */
 import Ajv, { ErrorObject } from 'ajv';
+import addFormats from 'ajv-formats';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -19,6 +20,11 @@ const doc = JSON.parse(readFileSync(join(__dirname, '..', 'docs', 'swagger.json'
 
 // strict:false — в схеме Nest есть ключи, которых ajv не знает (например example).
 const ajv = new Ajv({ strict: false, allErrors: true });
+
+// Без ajv-formats ajv не знает `format: "date-time"` и молча ПРОПУСКАЕТ его
+// («unknown format ignored»). То есть все даты в ответах не проверялись вовсе —
+// сверка врала бы «совпадает» на кривой дате. Теперь формат проверяется по-настоящему.
+addFormats(ajv);
 
 /**
  * OpenAPI 3.0 → JSON Schema.

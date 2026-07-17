@@ -6,17 +6,20 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { FollowStatus, MsgType, NotifType, Prisma } from '@prisma/client';
+import { FollowStatus, MsgType, NoteAudience, NotifType, Prisma } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StorageService } from '../../storage/storage.service';
 import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
+import { SpotifyService } from '../spotify/spotify.service';
 import { UserBriefDto } from '../users/dto/users.dto';
 import {
   CreateNoteDto,
   NoteDto,
   NoteLikeItemDto,
   NoteLikeToggleDto,
+  NoteMusicDto,
   NoteReplyItemDto,
   NoteReplySentDto,
   UpdateNoteDto,
@@ -41,10 +44,13 @@ const NOTE_SELECT = {
   userId: true,
   text: true,
   bgColor: true,
+  audience: true,
   createdAt: true,
   expiresAt: true,
   user: { select: USER_BRIEF },
-  music: { select: { id: true, title: true, artist: true, coverUrl: true } },
+  music: {
+    select: { id: true, title: true, artist: true, coverUrl: true, url: true, spotifyId: true },
+  },
   _count: { select: { likes: true } },
 } satisfies Prisma.NoteSelect;
 
@@ -60,6 +66,8 @@ export class NotesService {
     private readonly access: AccessService,
     private readonly chat: ChatUtilService,
     private readonly events: EventEmitter2,
+    private readonly spotify: SpotifyService,
+    private readonly storage: StorageService,
     config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -76,8 +84,9 @@ export class NotesService {
       data: {
         userId,
         text: dto.text,
-        musicId: dto.musicId ?? null,
+        musicId: await this.resolveMusicId(dto),
         bgColor: dto.bgColor ?? null,
+        audience: dto.audience ?? NoteAudience.FOLLOWERS,
         expiresAt: new Date(Date.now() + NOTE_TTL_MS),
       },
       select: { id: true },
@@ -96,11 +105,26 @@ export class NotesService {
     });
     const authorIds = [...following.map((f) => f.followingId), userId];
     const hidden = await this.access.blockedIds(userId);
+    const visibleAuthorIds = authorIds.filter((id) => !hidden.includes(id));
+
+    // Кто из этих авторов держит МЕНЯ в близких друзьях. Только их заметки
+    // с audience=CLOSE_FRIENDS мне видны: иначе «близкие друзья» были бы
+    // подписью на картинке, а не ограничением доступа.
+    const closeTo = await this.prisma.closeFriend.findMany({
+      where: { userId: { in: visibleAuthorIds }, friendId: userId },
+      select: { userId: true },
+    });
+    const closeToMe = new Set(closeTo.map((c) => c.userId));
 
     const rows = await this.prisma.note.findMany({
       where: {
-        userId: { in: authorIds.filter((id) => !hidden.includes(id)) },
+        userId: { in: visibleAuthorIds },
         expiresAt: { gt: new Date() },
+        OR: [
+          { audience: NoteAudience.FOLLOWERS },
+          // Свои заметки вижу всегда, чужие «для близких» — только если я в списке.
+          { audience: NoteAudience.CLOSE_FRIENDS, userId: { in: [userId, ...closeToMe] } },
+        ],
       },
       select: NOTE_SELECT,
       orderBy: { createdAt: 'desc' },
@@ -117,6 +141,7 @@ export class NotesService {
     const note = await this.prisma.note.findUnique({ where: { id }, select: NOTE_SELECT });
     if (!note) throw new NotFoundException('Заметка не найдена');
     await this.access.assertCanViewContent(userId, note.userId);
+    await this.assertAudience(userId, note);
 
     const liked = await this.prisma.noteLike.findUnique({
       where: { noteId_userId: { noteId: id, userId } },
@@ -252,12 +277,38 @@ export class NotesService {
   ): Promise<{ userId: string; text: string | null }> {
     const note = await this.prisma.note.findUnique({
       where: { id },
-      select: { userId: true, text: true, expiresAt: true },
+      select: { userId: true, text: true, expiresAt: true, audience: true },
     });
     if (!note) throw new NotFoundException('Заметка не найдена');
     if (note.expiresAt <= new Date()) throw new NotFoundException('Заметка истекла');
     await this.access.assertCanViewContent(userId, note.userId);
+    await this.assertAudience(userId, note);
     return { userId: note.userId, text: note.text };
+  }
+
+  /**
+   * Заметка «только для близких друзей» — видна автору и тем, кого он внёс
+   * в CloseFriend. Остальным её нет: 404, а не 403.
+   *
+   * 404 намеренно: 403 «вам нельзя» подтвердил бы, что заметка существует, и
+   * посторонний узнал бы о её наличии. Для него её просто не существует.
+   *
+   * Проверка нужна отдельно от ленты: лента фильтрует список, а сюда приходят
+   * по прямому id — like/reply/byId. Без неё «близкие друзья» обходились бы
+   * простым перебором id.
+   */
+  private async assertAudience(
+    viewerId: string,
+    note: { userId: string; audience: NoteAudience },
+  ): Promise<void> {
+    if (note.audience !== NoteAudience.CLOSE_FRIENDS) return;
+    if (note.userId === viewerId) return;
+
+    const isClose = await this.prisma.closeFriend.findUnique({
+      where: { userId_friendId: { userId: note.userId, friendId: viewerId } },
+      select: { id: true },
+    });
+    if (!isClose) throw new NotFoundException('Заметка не найдена');
   }
 
   private async assertOwner(userId: string, id: number): Promise<void> {
@@ -279,21 +330,52 @@ export class NotesService {
     this.events.emit(NOTIFY_EVENT, { userId, actorId, type, noteId } satisfies NotifyPayload);
   }
 
+  /**
+   * Какой трек прикрепить: наш `musicId` или трек из Spotify по `spotifyId`
+   * (импортируем — с обложкой и названием). Отправить и «сохранить себе» —
+   * разные намерения, поэтому в SavedMusic ничего не кладём.
+   */
+  private async resolveMusicId(dto: CreateNoteDto): Promise<number | null> {
+    if (dto.musicId) {
+      const row = await this.prisma.music.findUnique({
+        where: { id: dto.musicId },
+        select: { id: true },
+      });
+      if (!row) throw new NotFoundException('Трек не найден');
+      return row.id;
+    }
+    if (dto.spotifyId) return this.spotify.ensureImported(dto.spotifyId);
+    return null;
+  }
+
+  /**
+   * Трек заметки. «Играется целиком» определяется наличием файла в нашем S3
+   * (`keyFromUrl`), а не происхождением трека: если полный mp3 для трека из
+   * Spotify позже зальют через `music:import`, заметка начнёт играть его целиком
+   * без правок кода. У чистого Spotify-трека файла нет — там 30-сек preview.
+   */
+  private toNoteMusic(m: NonNullable<NoteRow['music']>): NoteMusicDto {
+    const isFullTrack = this.storage.keyFromUrl(m.url) !== null;
+    return {
+      id: m.id,
+      title: m.title,
+      artist: m.artist,
+      streamUrl: isFullTrack ? `${this.appUrl}/api/music/${m.id}/stream` : null,
+      previewUrl: m.url,
+      coverUrl: m.coverUrl,
+      spotifyId: m.spotifyId,
+      isFullTrack,
+    };
+  }
+
   private toDto(row: NoteRow, viewerId: string, isLiked: boolean): NoteDto {
     return {
       id: row.id,
       text: row.text ?? '',
       author: this.toBrief(row.user),
-      music: row.music
-        ? {
-            id: row.music.id,
-            title: row.music.title,
-            artist: row.music.artist,
-            streamUrl: `${this.appUrl}/api/music/${row.music.id}/stream`,
-            coverUrl: row.music.coverUrl,
-          }
-        : null,
+      music: row.music ? this.toNoteMusic(row.music) : null,
       bgColor: row.bgColor,
+      audience: row.audience,
       likesCount: row._count.likes,
       isLiked,
       isMine: row.userId === viewerId,

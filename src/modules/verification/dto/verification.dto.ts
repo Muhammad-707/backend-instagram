@@ -16,7 +16,12 @@ export class VerificationStatusDto {
   @ApiProperty({ example: false, description: 'Использован ли бесплатный триал (даётся 1 раз)' })
   trialUsed!: boolean;
 
-  @ApiPropertyOptional({ type: Number, nullable: true, example: 6, description: 'Дней до конца триала/периода' })
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    example: 6,
+    description: 'Дней до конца триала/периода',
+  })
   daysLeft!: number | null;
 
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })

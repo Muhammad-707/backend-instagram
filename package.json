@@ -24,7 +24,19 @@
     "seed": "ts-node prisma/seed.ts",
     "music:import": "ts-node -r dotenv/config scripts/music-import.ts",
     "swagger:export": "ts-node -r dotenv/config scripts/export-swagger.ts",
-    "endpoints:report": "ts-node scripts/endpoints-report.ts"
+    "endpoints:report": "ts-node scripts/endpoints-report.ts",
+    "er:diagram": "ts-node scripts/er-diagram.ts",
+    "smoke": "ts-node scripts/smoke.ts",
+    "contract:check": "ts-node scripts/contract-check.ts",
+    "socket:check": "ts-node scripts/socket-check.ts",
+    "live:check": "ts-node scripts/live-check.ts",
+    "group:check": "ts-node scripts/group-check.ts",
+    "notes:check": "ts-node scripts/notes-check.ts",
+    "nextauth:check": "ts-node scripts/nextauth-check.ts",
+    "calls:check": "ts-node scripts/calls-check.ts",
+    "live:media": "ts-node -r dotenv/config scripts/live-media-check.ts",
+    "livekit:check": "ts-node scripts/livekit-check.ts",
+    "verify:all": "npm run lint && npm run build && npm run test && npm run test:e2e && npm run smoke && npm run contract:check && npm run socket:check && npm run live:check && npm run group:check && npm run notes:check && npm run calls:check && npm run live:media"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -83,6 +95,8 @@
     "@types/nodemailer": "^6.4.17",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.2",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",

@@ -37,21 +37,25 @@ describe('validateEnv', () => {
           LIVEKIT_URL: 'ws://localhost:7880',
           APP_URL: 'http://localhost:3000',
         };
-        expect(() => validateEnv({ ...validProd, [key]: localhostValue[key] })).toThrow(/localhost/);
+        expect(() => validateEnv({ ...validProd, [key]: localhostValue[key] })).toThrow(
+          /localhost/,
+        );
       },
     );
 
     it.each(['DATABASE_URL', 'JWT_SECRET', 'S3_ACCESS_KEY', 'LIVEKIT_API_KEY'])(
       'набудани %s дар прод стартро мешиканад',
       (key) => {
-        const { [key]: _omitted, ...withoutKey } = validProd as Record<string, string>;
+        const withoutKey: Record<string, string> = { ...validProd };
+        delete withoutKey[key];
         expect(() => validateEnv(withoutKey)).toThrow(new RegExp(key));
       },
     );
 
     it('хатогӣ ҳамаи env-и гумшударо якбора рӯйхат мекунад, на танҳо якумашро', () => {
-      expect(() => validateEnv({ NODE_ENV: 'production', DATABASE_URL: validProd.DATABASE_URL }))
-        .toThrow(/JWT_SECRET[\s\S]*LIVEKIT_API_SECRET/);
+      expect(() =>
+        validateEnv({ NODE_ENV: 'production', DATABASE_URL: validProd.DATABASE_URL }),
+      ).toThrow(/JWT_SECRET[\s\S]*LIVEKIT_API_SECRET/);
     });
 
     it('ws:// дар прод рад мешавад — браузер аз https онро блок мекунад', () => {
@@ -67,9 +71,9 @@ describe('validateEnv', () => {
       const saved = process.env.NODE_ENV;
       process.env.NODE_ENV = 'development';
       try {
-        expect(() =>
-          validateEnv({ ...validProd, REDIS_URL: 'redis://localhost:6379' }),
-        ).toThrow(/localhost/);
+        expect(() => validateEnv({ ...validProd, REDIS_URL: 'redis://localhost:6379' })).toThrow(
+          /localhost/,
+        );
       } finally {
         process.env.NODE_ENV = saved;
       }

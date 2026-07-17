@@ -232,7 +232,11 @@ export class LiveService {
    * Доступ — тот же assertCanView, что у join(): приватность и блок работают
    * одинаково, иначе лента комментариев стала бы обходом закрытого эфира.
    */
-  async comments(userId: string, liveId: string, dto: CursorDto): Promise<CursorPage<LiveCommentDto>> {
+  async comments(
+    userId: string,
+    liveId: string,
+    dto: CursorDto,
+  ): Promise<CursorPage<LiveCommentDto>> {
     const live = await this.getRaw(liveId);
     await this.assertCanView(userId, live);
 
@@ -480,6 +484,26 @@ export class LiveService {
    * Доступ к эфиру: блок в любую сторону — 403. Приватный хост — только принятые подписчики
    * (или сам хост). Публичный хост виден всем (в т.ч. не подписчикам — через поиск).
    */
+  /**
+   * Тот же вопрос, что и `assertCanView`, но ответом, а не исключением —
+   * для сокета: у `live:subscribe` нет HTTP-ответа, куда положить 403.
+   *
+   * Нужен потому, что REST-guard закрывал только `join`, а комната сокета
+   * пускала кого угодно: заблокированный получал `live:comment` чужого эфира
+   * (проверено живьём). Логика приватности/блока остаётся в одном месте —
+   * здесь, а не копией в гейтвее.
+   */
+  async canView(userId: string, liveId: string): Promise<boolean> {
+    try {
+      const live = await this.getRaw(liveId);
+      await this.assertCanView(userId, live);
+      return true;
+    } catch {
+      // Эфир не найден / блок / закрытый аккаунт — во всех случаях «нельзя».
+      return false;
+    }
+  }
+
   private async assertCanView(userId: string, live: LiveRow): Promise<void> {
     if (userId === live.hostId) return;
     if (await this.access.isBlockedBetween(userId, live.hostId)) {

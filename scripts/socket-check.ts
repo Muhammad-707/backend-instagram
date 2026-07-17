@@ -1,11 +1,15 @@
 /**
  * Живая проверка авторизации сокета и событий (задача 3).
- * Запуск: npx ts-node scripts/socket-check.ts   (API должен быть поднят)
+ *
+ * Часть 2 (2026-07-17) — сигналинг звонков и typing. Причина: JWT отвечает
+ * «кто ты», но не «твой ли это чат». Сокет верил `chatId` из payload'а, и
+ * посторонний слал `call:offer` в ЧУЖОЙ чат (проверено живьём — доходило).
+ * Поэтому проверяем обе стороны: чужой не проходит И свой не сломан.
+ *
+ * Запуск: npm run socket:check   (API должен быть поднят)
  */
 import { io, Socket } from 'socket.io-client';
-
-const BASE = process.env.SMOKE_URL ?? 'http://localhost:4000/api';
-const WS = BASE.replace(/\/api$/, '');
+import { BASE, registerUser, WS } from './lib/verify-http';
 
 let passed = 0;
 let failed = 0;
@@ -55,19 +59,8 @@ function connect(auth: Record<string, string>): Promise<{ status: string; socket
 
 async function main(): Promise<void> {
   console.log(`\n▶ Санҷиши сокет: ${WS}/rt\n`);
-  const uniq = Date.now().toString().slice(-8);
 
-  const u1 = {
-    userName: `sock_a_${uniq}`,
-    fullName: 'Sock A',
-    email: `sock_a_${uniq}@example.com`,
-    password: 'Passw0rd!23',
-    confirmPassword: 'Passw0rd!23',
-    dob: '2000-01-01',
-  };
-  const reg = await api('/auth/register', u1);
-  const token: string = reg?.accessToken;
-  if (!token) throw new Error('регистрация нашуд');
+  const { token } = await registerUser('sock', 'a');
 
   // 1) Тикет мегирем
   const t = await api('/socket/ticket', {}, token);
@@ -98,8 +91,78 @@ async function main(): Promise<void> {
   check('бе auth рад мешавад', anon.status === 'rejected', `→ ${anon.status}`);
   anon.socket.disconnect();
 
+  await callSignalingChecks();
+
   console.log(`\n  Натиҷа: ${passed} гузашт, ${failed} афтод\n`);
   process.exit(failed ? 1 : 0);
+}
+
+// ─────────── зангҳо: сигналинг ва узвияти чат ───────────
+
+const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function connectToken(token: string): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const s = io(`${WS}/rt`, { auth: { token }, transports: ['websocket'], reconnection: false });
+    s.on('connect', () =>
+      setTimeout(() => (s.connected ? resolve(s) : reject(new Error('kicked'))), SETTLE_MS),
+    );
+    s.on('connect_error', (e) => reject(e));
+  });
+}
+
+/** Три свежих юзера: A и B в общем чате, C — посторонний. */
+async function callSignalingChecks(): Promise<void> {
+  console.log('\n  ── сигналинг зангҳо ──');
+
+  const a = await registerUser('call', 'a');
+  const b = await registerUser('call', 'b');
+  const c = await registerUser('call', 'c');
+
+  const chat = await api('/chats', { receiverUserId: b.id }, a.token);
+  const chatId: number = chat?.chatId ?? chat?.id;
+  if (!chatId) throw new Error('чат сохта нашуд: ' + JSON.stringify(chat));
+
+  const sockA = await connectToken(a.token);
+  const sockB = await connectToken(b.token);
+  const sockC = await connectToken(c.token);
+
+  const got: Record<string, any> = {};
+  for (const ev of ['call:offer', 'call:answer', 'call:ice', 'call:end', 'typing:start']) {
+    sockB.on(ev, (p: unknown) => (got[ev] = p));
+  }
+
+  // C дар чат НЕСТ — сигналаш набояд расад.
+  sockC.emit('call:offer', { chatId, sdp: { type: 'offer', sdp: 'ATTACKER' } });
+  sockC.emit('typing:start', chatId);
+  await wait(1000);
+  check('оффери бегона НАМЕРАСАД', !got['call:offer'], JSON.stringify(got['call:offer']));
+  check('typing-и бегона НАМЕРАСАД', !got['typing:start'], JSON.stringify(got['typing:start']));
+
+  // A узви чат аст — ҳама чиз бояд кор кунад (ислоҳ зангро накуштааст).
+  sockA.emit('call:offer', { chatId, sdp: { type: 'offer', sdp: 'REAL-OFFER' } });
+  await wait(700);
+  check(
+    'оффери узви ҳақиқӣ МЕРАСАД',
+    got['call:offer']?.sdp?.sdp === 'REAL-OFFER',
+    JSON.stringify(got['call:offer']),
+  );
+
+  sockA.emit('call:answer', { chatId, sdp: { type: 'answer', sdp: 'REAL-ANSWER' } });
+  sockA.emit('call:ice', { chatId, candidate: { candidate: 'REAL-ICE' } });
+  sockA.emit('typing:start', chatId);
+  await wait(700);
+  check('answer мерасад', got['call:answer']?.sdp?.sdp === 'REAL-ANSWER');
+  check('ice мерасад', !!got['call:ice']);
+  check('typing-и узв мерасад', got['typing:start']?.userId === a.id);
+
+  sockA.emit('call:end', { chatId });
+  await wait(700);
+  check('call:end мерасад', !!got['call:end']);
+
+  sockA.close();
+  sockB.close();
+  sockC.close();
 }
 
 main().catch((e) => {
