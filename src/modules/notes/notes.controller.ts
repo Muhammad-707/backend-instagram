@@ -15,6 +15,7 @@ import {
   NoteDto,
   NoteLikeItemDto,
   NoteLikeToggleDto,
+  NoteReactionDto,
   NoteReplyDto,
   NoteReplyItemDto,
   NoteReplySentDto,
@@ -122,6 +123,20 @@ export class NotesController {
     @Body() dto: NoteReplyDto,
   ): Promise<NoteReplySentDto> {
     return this.notesService.reply(userId, id, dto.text);
+  }
+
+  @Post(':id/reaction')
+  @ApiOperation({
+    summary: 'Эмодзи-реакция на заметку → в личку автору',
+    description: 'Как реакция на историю: эмодзи уходит сообщением автору. Нельзя на свою заметку.',
+  })
+  @ApiOkResponse({ type: NoteReplySentDto })
+  async reaction(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: NoteReactionDto,
+  ): Promise<NoteReplySentDto> {
+    return this.notesService.reaction(userId, id, dto.emoji);
   }
 
   @Get(':id/replies')

@@ -458,6 +458,20 @@ async function synthesizeChats(knownIds: Set<string>): Promise<number> {
   return made;
 }
 
+/**
+ * КРИТИЧНО: мы вставляем Post/Comment/Story с ЯВНЫМ id (= softclub-id). Postgres
+ * при явном id НЕ двигает sequence, поэтому следующий автоинкрементный insert из
+ * приложения взял бы уже занятый id → 409/unique violation. После импорта сдвигаем
+ * каждую sequence на MAX(id)+1, чтобы приложение снова могло создавать записи.
+ */
+async function resetSequences(): Promise<void> {
+  for (const t of ['Post', 'Comment', 'Story']) {
+    await prisma.$executeRawUnsafe(
+      `SELECT setval(pg_get_serial_sequence('"${t}"','id'), (SELECT COALESCE(MAX(id),0) FROM "${t}")+1, false)`,
+    );
+  }
+}
+
 // ─────────────────────────── main ───────────────────────────
 async function main(): Promise<void> {
   console.log(`\n🌱 Импорт из softclub-API: ${BASE}\n`);
@@ -498,6 +512,10 @@ async function main(): Promise<void> {
     chats = await synthesizeChats(knownIds);
     console.log(`✔ Чатов создано: ${chats}`);
   }
+
+  // Сдвигаем sequence'ы — иначе приложение не сможет создавать новые посты/истории.
+  await resetSequences();
+  console.log('✔ Sequence-ы (Post/Comment/Story) сброшены на MAX(id)+1');
 
   const [uc, pc, sc, fc, cc, mc] = await Promise.all([
     prisma.user.count(),

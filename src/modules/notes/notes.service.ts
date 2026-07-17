@@ -256,6 +256,15 @@ export class NotesService {
     return { sent: true, chatId: chat.id, messageId: message.id };
   }
 
+  /**
+   * Эмодзи-реакция на заметку → уходит в личку автору (как реакция на историю).
+   * Заметка — DM-центричная сущность, отдельной ленты реакций у неё нет: эмодзи
+   * это короткий ответ. Переиспользуем reply() — тот же путь в чат + уведомление.
+   */
+  async reaction(userId: string, id: number, emoji: string): Promise<NoteReplySentDto> {
+    return this.reply(userId, id, emoji);
+  }
+
   /** Ответы на заметку — ТОЛЬКО автору. */
   async replies(userId: string, id: number): Promise<NoteReplyItemDto[]> {
     const note = await this.prisma.note.findUnique({

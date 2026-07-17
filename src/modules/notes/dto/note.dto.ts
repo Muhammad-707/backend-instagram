@@ -10,6 +10,7 @@ import {
   Matches,
   MaxLength,
 } from 'class-validator';
+import { IsEmoji } from '../../../common/validators/is-emoji.decorator';
 import { UserBriefDto } from '../../users/dto/users.dto';
 
 export const NOTE_TEXT_MAX = 60;
@@ -96,6 +97,15 @@ export class NoteReplyDto {
   @IsNotEmpty()
   @MaxLength(500)
   text!: string;
+}
+
+export class NoteReactionDto {
+  @ApiProperty({
+    example: '❤️',
+    description: 'Эмодзи-реакция на заметку (уходит в личку автору, как в историях)',
+  })
+  @IsEmoji()
+  emoji!: string;
 }
 
 // ─────────────── ответы ───────────────
