@@ -25,9 +25,19 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$disconnect();
   }
 
-  /** Для /api/health */
+  /**
+   * Для /api/health.
+   *
+   * Намеояд танҳо `SELECT 1`: он фақат пайвастро месанҷад ва ҷадвал талаб
+   * намекунад. Дар прод БД бе миграция буд — `SELECT 1` мегузашт, health
+   * `database: up` менавишт, вале ҳар дархости воқеӣ 500 медод. Healthcheck
+   * набояд «up» гӯяд, агар API кор карда натавонад.
+   *
+   * Барои ҳамин ба ҷадвали воқеӣ мезанем: агар схема набошад, Prisma P2021
+   * медиҳад ва health рост «down» мегӯяд.
+   */
   async ping(): Promise<boolean> {
-    await this.$queryRaw`SELECT 1`;
+    await this.user.findFirst({ select: { id: true } });
     return true;
   }
 }

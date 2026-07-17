@@ -99,6 +99,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
           errors: ['Related record not found'],
           code: 'FOREIGN_KEY_VIOLATION',
         };
+      // P2021 — ҷадвал нест, P2022 — сутун нест. Ҳарду як маъно доранд:
+      // схема ба БД насупоридааст (`prisma migrate deploy` нагузаштааст).
+      // Пештар инҳо ба `default` меафтоданд ва «Database error»-и норавшан
+      // медоданд, дар ҳоле ки `/api/health` мегуфт database: up — чунки
+      // `SELECT 1` ҷадвал талаб намекунад. Соатҳо барои ҳамин сарф шуданд.
+      case 'P2021':
+      case 'P2022':
+        this.logger.error(`Prisma ${e.code}: ${e.message} — схема муҳоҷират нашудааст?`);
+        return {
+          status: HttpStatus.INTERNAL_SERVER_ERROR,
+          errors: ['Схемаи БД муҳоҷират нашудааст (prisma migrate deploy)'],
+          code: 'SCHEMA_NOT_MIGRATED',
+        };
       default:
         this.logger.error(`Prisma ${e.code}: ${e.message}`);
         return {

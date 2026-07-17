@@ -349,7 +349,8 @@ Put Nginx/Caddy in front for TLS and to proxy `/api` + the Socket.IO upgrade to 
 2. Point S3 vars at a real bucket (AWS S3, Cloudflare R2, or a hosted MinIO).
 3. Set `SMTP_*` to a real provider (e.g. Gmail App Password — no code change) and `LIVEKIT_*`
    to a LiveKit Cloud project (or drop live features).
-4. Build: `npm ci && npm run build` · Start: `npx prisma migrate deploy && node dist/main.js`.
+4. Docker runtime: leave the Start Command **empty** — the image runs `prisma migrate deploy`
+   itself (`docker-entrypoint.sh`) before booting the API.
 5. Set `FRONTEND_URL` to your frontend origin(s) (comma-separated) for CORS.
 
 **Production checklist:** rotate `JWT_SECRET` / `JWT_REFRESH_SECRET`, set strong DB/S3

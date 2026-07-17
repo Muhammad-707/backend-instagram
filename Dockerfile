@@ -44,5 +44,9 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY package*.json ./
 
+# Миграция дар старт — на дар «Start Command»-и дастии панел. Тафсил дар худи файл.
+COPY docker-entrypoint.sh ./
+RUN chmod +x docker-entrypoint.sh
+
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+CMD ["./docker-entrypoint.sh"]

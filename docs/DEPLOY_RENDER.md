@@ -10,10 +10,18 @@
 |---|---|
 | Repository | `Muhammad-707/backend-instagram` · ветка `main` |
 | Runtime | **Docker** (`Dockerfile` в корне — собирается ~8 мин с нуля, ~3с с кэшем) |
-| Start Command | `npx prisma migrate deploy && node dist/main.js` |
+| Start Command | **оставить пустым** — миграции запускает сам образ (`docker-entrypoint.sh`) |
 | Health Check Path | `/api/health` |
 
 `prisma` лежит в `dependencies` именно ради `migrate deploy` на старте — не переносить в dev.
+
+> **Почему Start Command больше не нужен.** Раньше здесь стояло
+> `npx prisma migrate deploy && node dist/main.js`, и миграции держались на одном
+> руками вписанном поле в панели. Поле оказалось пустым — Render взял `CMD` из
+> Dockerfile, API поднялся на пустой БД, и **все** запросы к таблицам отдавали
+> 500 `Database error`, пока `/api/health` показывал `database: up` (его `SELECT 1`
+> таблиц не требует). Теперь `migrate deploy` внутри образа — от поля в панели
+> не зависит. Вписывать его обратно не нужно.
 
 ## 2. Переменные окружения
 
