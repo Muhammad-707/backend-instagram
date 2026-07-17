@@ -1,358 +1,525 @@
 /* eslint-disable no-console */
-import { MediaType, MsgType, PrismaClient } from '@prisma/client';
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ *  SEED: импорт РЕАЛЬНЫХ данных из softclub-API в нашу базу (Prisma/PostgreSQL)
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ *  Источник: https://instagram-api.softclub.tj  (Swagger v1)
+ *  Что тянем:  все пользователи (~422), их профили, посты (+медиа, комментарии,
+ *              лайки), истории и подписки (followers/following). Плюс синтезируем
+ *              чаты с сообщениями между взаимными подписчиками — чтобы на фронте
+ *              переписки были «живыми».
+ *
+ *  СООТВЕТСТВИЕ СХЕМЕ (проверено — schema.prisma менять НЕ нужно):
+ *   • softclub-user  { id, userName, fullName, avatar/image, about, gender,
+ *                      occupation, dob, subscribersCount } → наши User + Profile.
+ *   • У softclub НЕТ e-mail в выдаче и НЕТ поля «slug»: e-mail синтезируем как
+ *     `${id}@softclub.import` (наш email обязателен и уникален), роль slug играет
+ *     userName. Пароль у всех импортированных — общий (SEED_PASSWORD).
+ *   • У softclub НЕТ эндпоинта заметок (zametki) — импортировать нечего, поэтому
+ *     заметки этот seed НЕ создаёт (в отличие от постов/историй).
+ *   • Реальные чаты softclub приватны (доступны только под токеном их владельца),
+ *     поэтому переписки мы СИНТЕЗИРУЕМ между взаимными подписчиками.
+ *   • locationId профиля НЕ переносим: id локаций softclub не совпадают с нашими
+ *     (был бы битый FK).
+ *
+ *  Идемпотентность: пишем через upsert по естественным ключам (softclub-id →
+ *  наш id для User/Post/Comment/Story, (follower,following) для Follow). Повторный
+ *  запуск не плодит дубли и не стирает базу.
+ *
+ *  Запуск:  npx prisma db seed     (или  npx ts-node prisma/seed.ts)
+ *
+ *  ENV (все опциональны):
+ *     SOFTCLUB_BASE    базовый URL          (default https://instagram-api.softclub.tj)
+ *     SEED_USER_LIMIT  сколько юзеров тянуть (0 = все; для теста поставьте 30)
+ *     SEED_CONCURRENCY параллельные запросы  (default 8)
+ *     SEED_CHATS       синтезировать чаты    (default 1; 0 — выключить)
+ *     SEED_PASSWORD    пароль импортированных (default Password123)
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+import { Gender, MediaType, MsgType, PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
-const PASSWORD = 'Password123';
-const PICSUM = (seed: string, w = 1080, h = 1350) => `https://picsum.photos/seed/${seed}/${w}/${h}`;
-const AVATAR = (seed: string) => `https://i.pravatar.cc/300?u=${seed}`;
-const SAMPLE_VIDEO =
-  'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+// ─────────────────────────── конфиг ───────────────────────────
+const BASE = (process.env.SOFTCLUB_BASE ?? 'https://instagram-api.softclub.tj').replace(/\/+$/, '');
+const IMG_BASE = `${BASE}/images`;
+const USER_LIMIT = Number(process.env.SEED_USER_LIMIT ?? 0); // 0 = все
+const CONCURRENCY = Math.max(1, Number(process.env.SEED_CONCURRENCY ?? 8));
+const SEED_CHATS = process.env.SEED_CHATS !== '0';
+const PASSWORD = process.env.SEED_PASSWORD ?? 'Password123';
+const CHAT_LIMIT = 80; // максимум синтетических диалогов
+const LIKES_CAP = 40; // не более стольких лайк-строк на пост
 
-/** Детерминированный ПСЧ — сид всегда даёт одинаковые данные. */
-let seedState = 42;
-function rnd(): number {
-  seedState = (seedState * 1103515245 + 12345) % 2147483648;
-  return seedState / 2147483648;
+// ─────────────────────────── типы softclub ───────────────────────────
+interface Envelope<T> {
+  data: T;
+  errors: string[] | null;
+  statusCode: number;
 }
-const pick = <T>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)];
-const rint = (min: number, max: number): number => min + Math.floor(rnd() * (max - min + 1));
-const hoursAgo = (h: number): Date => new Date(Date.now() - h * 3600_000);
+interface Paged<T> {
+  pageNumber: number;
+  totalPage: number;
+  data: T[];
+}
+interface ScUser {
+  id: string;
+  userName: string;
+  fullName: string;
+  avatar: string;
+  subscribersCount: number;
+}
+interface ScProfile {
+  image: string;
+  gender: string | null;
+  firstName: string;
+  lastName: string;
+  dob: string | null;
+  occupation: string | null;
+  about: string | null;
+}
+interface ScComment {
+  postCommentId: number;
+  userId: string;
+  dateCommented: string;
+  comment: string;
+}
+interface ScPost {
+  postId: number;
+  userId: string;
+  datePublished: string;
+  images: string[];
+  postLikeCount: number;
+  comments: ScComment[];
+  title: string | null;
+  content: string | null;
+}
+interface ScStory {
+  id: number;
+  fileName: string;
+  createAt: string;
+}
+interface ScSub {
+  userShortInfo: { userId: string };
+}
 
-// ---------------------------------------------------------------- локации (30)
-const LOCATIONS: { city: string; state: string | null; country: string }[] = [
-  { city: 'Dushanbe', state: null, country: 'Tajikistan' },
-  { city: 'Khujand', state: 'Sughd', country: 'Tajikistan' },
-  { city: 'Bokhtar', state: 'Khatlon', country: 'Tajikistan' },
-  { city: 'Kulob', state: 'Khatlon', country: 'Tajikistan' },
-  { city: 'Istaravshan', state: 'Sughd', country: 'Tajikistan' },
-  { city: 'Tashkent', state: null, country: 'Uzbekistan' },
-  { city: 'Samarkand', state: null, country: 'Uzbekistan' },
-  { city: 'Bishkek', state: null, country: 'Kyrgyzstan' },
-  { city: 'Almaty', state: null, country: 'Kazakhstan' },
-  { city: 'Astana', state: null, country: 'Kazakhstan' },
-  { city: 'Moscow', state: null, country: 'Russia' },
-  { city: 'Saint Petersburg', state: null, country: 'Russia' },
-  { city: 'Istanbul', state: null, country: 'Turkey' },
-  { city: 'Antalya', state: null, country: 'Turkey' },
-  { city: 'Dubai', state: null, country: 'UAE' },
-  { city: 'Abu Dhabi', state: null, country: 'UAE' },
-  { city: 'Doha', state: null, country: 'Qatar' },
-  { city: 'London', state: null, country: 'United Kingdom' },
-  { city: 'Paris', state: null, country: 'France' },
-  { city: 'Berlin', state: null, country: 'Germany' },
-  { city: 'Rome', state: null, country: 'Italy' },
-  { city: 'Barcelona', state: 'Catalonia', country: 'Spain' },
-  { city: 'Amsterdam', state: null, country: 'Netherlands' },
-  { city: 'New York', state: 'NY', country: 'USA' },
-  { city: 'Los Angeles', state: 'CA', country: 'USA' },
-  { city: 'Miami', state: 'FL', country: 'USA' },
-  { city: 'Tokyo', state: null, country: 'Japan' },
-  { city: 'Seoul', state: null, country: 'South Korea' },
-  { city: 'Singapore', state: null, country: 'Singapore' },
-  { city: 'Sydney', state: 'NSW', country: 'Australia' },
-];
+// ─────────────────────────── http ───────────────────────────
+let token = '';
 
-// ---------------------------------------------------------------- юзеры (20)
-const USERS: { userName: string; fullName: string }[] = [
-  { userName: 'eraj', fullName: 'Eraj Rahimov' },
-  { userName: 'm.ibrohim', fullName: 'Ibrohim Muhammadiev' },
-  { userName: 'chessmaster', fullName: 'Farrukh Nazarov' },
-  { userName: 'amerika', fullName: 'Amina Karimova' },
-  { userName: 'nodira', fullName: 'Nodira Sharipova' },
-  { userName: 'daler', fullName: 'Daler Juraev' },
-  { userName: 'sitora', fullName: 'Sitora Yusupova' },
-  { userName: 'jasur', fullName: 'Jasur Alimov' },
-  { userName: 'malika', fullName: 'Malika Rustamova' },
-  { userName: 'behruz', fullName: 'Behruz Safarov' },
-  { userName: 'zarina', fullName: 'Zarina Hakimova' },
-  { userName: 'firuz', fullName: 'Firuz Odilov' },
-  { userName: 'shahzoda', fullName: 'Shahzoda Nabieva' },
-  { userName: 'komron', fullName: 'Komron Ismoilov' },
-  { userName: 'dilnoza', fullName: 'Dilnoza Tursunova' },
-  { userName: 'rustam', fullName: 'Rustam Qodirov' },
-  { userName: 'nigora', fullName: 'Nigora Salimova' },
-  { userName: 'sherzod', fullName: 'Sherzod Mirzoev' },
-  { userName: 'gulnora', fullName: 'Gulnora Ahmedova' },
-  { userName: 'photolab', fullName: 'Photo Lab Studio' },
-];
+async function login(): Promise<void> {
+  // Выдача softclub закрыта (401) — нужен любой Bearer. Заводим одноразовый аккаунт.
+  const uname = `sc_seed_${Date.now().toString(36)}`;
+  await fetch(`${BASE}/Account/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userName: uname,
+      fullName: 'Seed Importer',
+      email: `${uname}@example.com`,
+      password: 'Passw0rd!23',
+      confirmPassword: 'Passw0rd!23',
+    }),
+  }).catch(() => undefined);
 
-const CAPTIONS = [
-  'Прекрасный день ☀️ #travel #sunset',
-  'Утро начинается с кофе ☕ #coffee #morning',
-  'Новый проект в работе 💻 #code #dev',
-  'Горы зовут 🏔 #mountains #nature',
-  'Вечерний город 🌃 #city #night',
-  'Тренировка сделана 💪 #gym #fitness',
-  'Лучший вид #travel #view',
-  'Семья — это всё ❤️ #family',
-  'Музыка на весь день 🎧 #music',
-  'Просто хорошее фото 📸 #photography',
-];
-
-async function main(): Promise<void> {
-  console.log('🌱 Seeding…');
-
-  // Порядок важен: сначала зависимые таблицы
-  await prisma.$transaction([
-    prisma.notification.deleteMany(),
-    prisma.message.deleteMany(),
-    prisma.chatParticipant.deleteMany(),
-    prisma.chat.deleteMany(),
-    prisma.story.deleteMany(),
-    prisma.note.deleteMany(),
-    prisma.postHashtag.deleteMany(),
-    prisma.hashtag.deleteMany(),
-    prisma.postMedia.deleteMany(),
-    prisma.post.deleteMany(),
-    prisma.follow.deleteMany(),
-    prisma.savedMusic.deleteMany(),
-    // Music НЕ удаляем: треки — это реальные mp3 в MinIO, залитые `npm run music:import`.
-    // Пересоздавать их здесь заглушками означало бы сломать стриминг.
-    prisma.profile.deleteMany(),
-    prisma.user.deleteMany(),
-    prisma.location.deleteMany(),
-  ]);
-
-  // --- Музыка: НЕ создаём здесь. Треки — это настоящие mp3 в MinIO,
-  // залитые скриптом `npm run music:import` (он читает assets/music/).
-  // Раньше seed писал сюда URL-заглушки (cdn.pixabay.com/audio/track-N.mp3),
-  // из-за которых стриминг был невозможен.
-  const music = await prisma.music.findMany();
-  /** null, если музыки нет — посты и истории просто останутся без трека. */
-  const pickMusicId = (): number | null => (music.length > 0 ? pick(music).id : null);
-  if (music.length === 0) {
-    console.warn(
-      '  ⚠️  В таблице Music пусто. Сначала положите mp3 в assets/music/ и запустите `npm run music:import`,\n' +
-        '      иначе посты и истории останутся без музыки.',
-    );
-  } else {
-    console.log(`  🎵 music: ${music.length} (из MinIO, seed их не трогает)`);
-  }
-
-  // --- Локации
-  await prisma.location.createMany({
-    data: LOCATIONS.map((l) => ({
-      city: l.city,
-      state: l.state,
-      country: l.country,
-      lat: Number((rnd() * 180 - 90).toFixed(4)),
-      lng: Number((rnd() * 360 - 180).toFixed(4)),
-    })),
+  const res = await fetch(`${BASE}/Account/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userName: uname, password: 'Passw0rd!23' }),
   });
-  const locations = await prisma.location.findMany();
-  console.log(`  📍 locations: ${locations.length}`);
+  const json = (await res.json()) as Envelope<string>;
+  if (!json.data) throw new Error('Не удалось залогиниться в softclub-API');
+  token = json.data;
+}
 
-  // --- Юзеры + профили
-  const passwordHash = await bcrypt.hash(PASSWORD, 12);
-  const users = [];
-  for (let i = 0; i < USERS.length; i++) {
-    const u = USERS[i];
-    const user = await prisma.user.create({
-      data: {
-        userName: u.userName,
-        fullName: u.fullName,
-        email: `${u.userName.replace('.', '')}@example.com`,
-        passwordHash,
-        dob: new Date(1995 + (i % 10), i % 12, ((i * 3) % 27) + 1),
-        emailVerified: true,
-        isPrivate: i === 4 || i === 12, // nodira и shahzoda — приватные
-        isVerified: i < 3,
-        role: i === 0 ? 'ADMIN' : 'USER',
-        profile: {
+/** GET c Bearer + ретраи (сеть/401/429). Возвращает распарсенный JSON или null. */
+async function api<T>(path: string, tries = 3): Promise<T | null> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(`${BASE}${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (res.status === 401) {
+        await login();
+        continue;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return (await res.json()) as T;
+    } catch {
+      await sleep(300 * (i + 1));
+    }
+  }
+  return null;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Пул с ограниченной параллельностью — не заваливаем чужой API. */
+async function mapPool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let idx = 0;
+  const worker = async (): Promise<void> => {
+    while (idx < items.length) await fn(items[idx++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(n, items.length || 1) }, worker));
+}
+
+// ─────────────────────────── утилиты ───────────────────────────
+const imgUrl = (f?: string | null): string | null => (f && f.trim() ? `${IMG_BASE}/${f}` : null);
+
+const mediaTypeOf = (file: string): MediaType =>
+  /\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(file) ? MediaType.VIDEO : MediaType.IMAGE;
+
+function genderOf(g: string | null): Gender {
+  const v = (g ?? '').toLowerCase();
+  if (v === 'male') return Gender.MALE;
+  if (v === 'female') return Gender.FEMALE;
+  return Gender.HIDDEN;
+}
+
+function safeDate(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+const clip = (s: string | null | undefined, max: number): string | null =>
+  s == null ? null : s.length > max ? s.slice(0, max) : s;
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ─────────────────────────── шаги ───────────────────────────
+async function fetchAllUsers(): Promise<ScUser[]> {
+  const users: ScUser[] = [];
+  for (let page = 1; ; page++) {
+    const res = await api<Paged<ScUser>>(`/User/get-users?PageNumber=${page}&PageSize=100`);
+    if (!res?.data?.length) break;
+    users.push(...res.data);
+    if (page >= res.totalPage) break;
+  }
+  return USER_LIMIT > 0 ? users.slice(0, USER_LIMIT) : users;
+}
+
+async function fetchAllPosts(knownIds: Set<string>): Promise<ScPost[]> {
+  const posts: ScPost[] = [];
+  // Сначала узнаём число страниц (с упорным ретраем — на всякий случай API «устал»).
+  let first = await api<Paged<ScPost>>(`/Post/get-posts?PageNumber=1&PageSize=50`, 5);
+  for (let t = 0; !first && t < 3; t++) {
+    await sleep(1500);
+    first = await api<Paged<ScPost>>(`/Post/get-posts?PageNumber=1&PageSize=50`, 5);
+  }
+  if (!first?.data) return posts; // API недоступен — вернём пусто (не роняем весь seed)
+  const total = first.totalPage || 1;
+  const take = (arr: ScPost[]): void => {
+    for (const p of arr) if (knownIds.has(p.userId)) posts.push(p);
+  };
+  take(first.data);
+  for (let page = 2; page <= total; page++) {
+    const res = await api<Paged<ScPost>>(`/Post/get-posts?PageNumber=${page}&PageSize=50`, 5);
+    if (res?.data?.length) take(res.data);
+  }
+  return posts;
+}
+
+async function upsertUsers(users: ScUser[], passwordHash: string): Promise<void> {
+  let done = 0;
+  await mapPool(users, CONCURRENCY, async (u) => {
+    const prof = await api<Envelope<ScProfile>>(`/UserProfile/get-user-profile-by-id?id=${u.id}`);
+    const p = prof?.data;
+    const avatar = imgUrl(p?.image || u.avatar);
+    const fullName =
+      u.fullName?.trim() || `${p?.firstName ?? ''} ${p?.lastName ?? ''}`.trim() || u.userName;
+    const dob = safeDate(p?.dob) ?? undefined;
+    const profileData = {
+      avatarUrl: avatar,
+      about: clip(p?.about, 150),
+      occupation: clip(p?.occupation, 100),
+      gender: genderOf(p?.gender ?? null),
+    };
+
+    try {
+      await prisma.user.upsert({
+        where: { id: u.id },
+        update: { fullName },
+        create: {
+          id: u.id,
+          userName: u.userName,
+          fullName,
+          email: `${u.id}@softclub.import`,
+          passwordHash,
+          emailVerified: true,
+          dob,
+        },
+      });
+    } catch (e) {
+      // Конфликт userName с уже существующим (напр. демо-данными) — суффиксуем.
+      if (/Unique|P2002/.test(String(e))) {
+        await prisma.user
+          .upsert({
+            where: { id: u.id },
+            update: {},
+            create: {
+              id: u.id,
+              userName: `${u.userName}_${u.id.slice(0, 4)}`,
+              fullName,
+              email: `${u.id}@softclub.import`,
+              passwordHash,
+              emailVerified: true,
+              dob,
+            },
+          })
+          .catch(() => undefined);
+      }
+    }
+
+    await prisma.profile
+      .upsert({ where: { userId: u.id }, update: profileData, create: { userId: u.id, ...profileData } })
+      .catch(() => undefined);
+
+    if (++done % 50 === 0) console.log(`   …профилей: ${done}/${users.length}`);
+  });
+}
+
+async function importPosts(posts: ScPost[], userIds: string[]): Promise<void> {
+  const known = new Set(userIds);
+  let done = 0;
+  for (const post of posts) {
+    const caption = clip([post.title, post.content].filter(Boolean).join('\n').trim() || null, 2200);
+    const media = (post.images ?? []).filter(Boolean);
+    const isReel = media.length === 1 && mediaTypeOf(media[0]) === MediaType.VIDEO;
+    const createdAt = safeDate(post.datePublished) ?? new Date();
+
+    try {
+      await prisma.post.upsert({
+        where: { id: post.postId },
+        update: { caption, isReel },
+        create: { id: post.postId, userId: post.userId, caption, isReel, createdAt },
+      });
+
+      // Медиа перезаписываем целиком — идемпотентно.
+      await prisma.postMedia.deleteMany({ where: { postId: post.postId } });
+      if (media.length) {
+        await prisma.postMedia.createMany({
+          data: media.map((f, i) => ({ postId: post.postId, url: imgUrl(f)!, type: mediaTypeOf(f), order: i })),
+        });
+      }
+
+      // Комментарии — только от известных нам пользователей.
+      for (const c of post.comments ?? []) {
+        if (!known.has(c.userId)) continue;
+        await prisma.comment
+          .upsert({
+            where: { id: c.postCommentId },
+            update: {},
+            create: {
+              id: c.postCommentId,
+              postId: post.postId,
+              userId: c.userId,
+              text: clip(c.comment, 2200) ?? '…',
+              createdAt: safeDate(c.dateCommented) ?? createdAt,
+            },
+          })
+          .catch(() => undefined);
+      }
+
+      // Лайки: синтезируем до postLikeCount из случайных пользователей — счётчик «живой».
+      const likeN = Math.min(post.postLikeCount ?? 0, LIKES_CAP);
+      if (likeN > 0) {
+        const likers = shuffle(userIds.filter((id) => id !== post.userId)).slice(0, likeN);
+        await prisma.postLike
+          .createMany({ data: likers.map((uid) => ({ postId: post.postId, userId: uid })), skipDuplicates: true })
+          .catch(() => undefined);
+      }
+    } catch {
+      /* один битый пост не роняет весь импорт */
+    }
+    if (++done % 50 === 0) console.log(`   …постов: ${done}/${posts.length}`);
+  }
+}
+
+async function importFollows(users: ScUser[], knownIds: Set<string>): Promise<number> {
+  let count = 0;
+  await mapPool(users, CONCURRENCY, async (u) => {
+    const res = await api<Envelope<ScSub[]>>(`/FollowingRelationShip/get-subscriptions?UserId=${u.id}`);
+    for (const s of res?.data ?? []) {
+      const targetId = s.userShortInfo?.userId;
+      if (!targetId || targetId === u.id || !knownIds.has(targetId)) continue;
+      await prisma.follow
+        .upsert({
+          where: { followerId_followingId: { followerId: u.id, followingId: targetId } },
+          update: {},
+          create: { followerId: u.id, followingId: targetId },
+        })
+        .then(() => count++)
+        .catch(() => undefined);
+    }
+  });
+  return count;
+}
+
+async function importStories(users: ScUser[]): Promise<number> {
+  let count = 0;
+  await mapPool(users, CONCURRENCY, async (u) => {
+    const res = await api<Envelope<{ stories: ScStory[] }>>(`/Story/get-user-stories/${u.id}`);
+    for (const st of res?.data?.stories ?? []) {
+      const url = imgUrl(st.fileName);
+      if (!url) continue;
+      const createdAt = safeDate(st.createAt) ?? new Date();
+      await prisma.story
+        .upsert({
+          where: { id: st.id },
+          update: {},
           create: {
-            avatarUrl: AVATAR(u.userName),
-            about: `${u.fullName} · Dushanbe`,
-            website: i % 4 === 0 ? `https://${u.userName}.tj` : null,
-            gender: i % 2 === 0 ? 'MALE' : 'FEMALE',
-            locationId: locations[i % locations.length].id,
+            id: st.id,
+            userId: u.id,
+            mediaUrl: url,
+            mediaType: mediaTypeOf(st.fileName),
+            createdAt,
+            expiresAt: new Date(createdAt.getTime() + 24 * 3600_000),
           },
-        },
-        presence: { create: { isOnline: i % 3 === 0, lastSeenAt: hoursAgo(rint(0, 48)) } },
-      },
-    });
-    users.push(user);
-  }
-  console.log(`  👤 users: ${users.length} (пароль у всех: ${PASSWORD})`);
+        })
+        .then(() => count++)
+        .catch(() => undefined);
+    }
+  });
+  return count;
+}
 
-  // --- Подписки: каждый подписан на 5-12 случайных
-  const followData: { followerId: string; followingId: string; status: 'ACCEPTED' | 'PENDING' }[] =
-    [];
+const CHAT_LINES = [
+  'Салом! Чӣ хел?',
+  'Ассалом, бародар 👋',
+  'Рахмат, хубам. Худат чӣ хел?',
+  'Ана ин пости навамро дидӣ?',
+  'Зӯр шудааст 🔥',
+  'Рахмат! Пагоҳ вомехӯрем?',
+  'Ҳатман, соати чанд?',
+  'Соати 18, дар маркази шаҳр.',
+  'Окей, розӣ 👍',
+  'Онлайн бош, паём мефиристам.',
+];
+
+/** Синтетические чаты между взаимными подписчиками — чтобы переписки были «живыми». */
+async function synthesizeChats(knownIds: Set<string>): Promise<number> {
+  const follows = await prisma.follow.findMany({ select: { followerId: true, followingId: true } });
+  const set = new Set(follows.map((f) => `${f.followerId}|${f.followingId}`));
   const seen = new Set<string>();
-  for (const follower of users) {
-    const count = rint(5, 12);
-    for (let i = 0; i < count; i++) {
-      const target = pick(users);
-      const key = `${follower.id}:${target.id}`;
-      if (target.id === follower.id || seen.has(key)) continue;
-      seen.add(key);
-      followData.push({
-        followerId: follower.id,
-        followingId: target.id,
-        status: target.isPrivate ? (rnd() > 0.5 ? 'PENDING' : 'ACCEPTED') : 'ACCEPTED',
-      });
-    }
+  const pairs: [string, string][] = [];
+  for (const f of follows) {
+    if (!knownIds.has(f.followerId) || !knownIds.has(f.followingId)) continue;
+    if (!set.has(`${f.followingId}|${f.followerId}`)) continue; // нужна взаимность
+    const key = [f.followerId, f.followingId].sort().join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push([f.followerId, f.followingId]);
+    if (pairs.length >= CHAT_LIMIT) break;
   }
-  await prisma.follow.createMany({ data: followData });
-  console.log(`  🔗 follows: ${followData.length}`);
 
-  // --- Хэштеги
-  const tagNames = [
-    'travel',
-    'sunset',
-    'coffee',
-    'morning',
-    'code',
-    'dev',
-    'mountains',
-    'nature',
-    'city',
-    'night',
-    'gym',
-    'fitness',
-    'view',
-    'family',
-    'music',
-    'photography',
-  ];
-  await prisma.hashtag.createMany({ data: tagNames.map((name) => ({ name })) });
-  const hashtags = await prisma.hashtag.findMany();
-
-  // --- Посты (100: ~70 фото/карусель, ~30 reels)
-  let postCount = 0;
-  for (let i = 0; i < 100; i++) {
-    const author = users[i % users.length];
-    const isReel = i % 10 >= 7;
-    const caption = pick(CAPTIONS);
-    const mediaCount = isReel ? 1 : rint(1, 3);
-
-    const post = await prisma.post.create({
-      data: {
-        userId: author.id,
-        caption,
-        isReel,
-        locationId: rnd() > 0.4 ? pick(locations).id : null,
-        musicId: isReel || rnd() > 0.7 ? pickMusicId() : null,
-        createdAt: hoursAgo(rint(1, 24 * 30)),
-        media: {
-          create: Array.from({ length: mediaCount }, (_, k) => ({
-            url: isReel ? SAMPLE_VIDEO : PICSUM(`post${i}_${k}`),
-            type: isReel ? MediaType.VIDEO : MediaType.IMAGE,
-            order: k,
-            width: isReel ? 720 : 1080,
-            height: isReel ? 1280 : 1350,
-            duration: isReel ? 15 : null,
-            thumbUrl: isReel ? PICSUM(`reelthumb${i}`, 720, 1280) : null,
-          })),
-        },
+  let made = 0;
+  for (const [a, b] of pairs) {
+    const existing = await prisma.chat.findFirst({
+      where: {
+        isGroup: false,
+        AND: [
+          { participants: { some: { userId: a } } },
+          { participants: { some: { userId: b } } },
+        ],
       },
+      select: { id: true },
     });
-    postCount++;
+    if (existing) continue;
 
-    // хэштеги из подписи
-    const inCaption = hashtags.filter((h) => caption.includes(`#${h.name}`));
-    if (inCaption.length) {
-      await prisma.postHashtag.createMany({
-        data: inCaption.map((h) => ({ postId: post.id, hashtagId: h.id })),
-      });
-      await prisma.hashtag.updateMany({
-        where: { id: { in: inCaption.map((h) => h.id) } },
-        data: { postsCount: { increment: 1 } },
-      });
-    }
-
-    // лайки и комментарии
-    const likers = users.filter(() => rnd() > 0.6);
-    if (likers.length) {
-      await prisma.postLike.createMany({
-        data: likers.map((u) => ({ postId: post.id, userId: u.id })),
-        skipDuplicates: true,
-      });
-    }
-    const commentCount = rint(0, 4);
-    for (let c = 0; c < commentCount; c++) {
-      await prisma.comment.create({
-        data: {
-          postId: post.id,
-          userId: pick(users).id,
-          text: pick(['Огонь 🔥', 'Красота!', 'Круто 👏', 'Где это?', 'Супер фото']),
-          createdAt: hoursAgo(rint(1, 100)),
-        },
-      });
-    }
-  }
-  console.log(`  📷 posts: ${postCount} (с медиа, лайками, комментариями)`);
-
-  // --- Истории (у 10 юзеров, живые 24ч)
-  let storyCount = 0;
-  for (const author of users.slice(0, 10)) {
-    for (let s = 0; s < rint(1, 3); s++) {
-      const createdAt = hoursAgo(rint(1, 20));
-      await prisma.story.create({
-        data: {
-          userId: author.id,
-          mediaUrl: PICSUM(`story${author.userName}${s}`, 1080, 1920),
-          mediaType: MediaType.IMAGE,
-          duration: 5,
-          musicId: rnd() > 0.5 ? pickMusicId() : null,
-          musicStartSec: 12,
-          closeFriendsOnly: rnd() > 0.8,
-          createdAt,
-          expiresAt: new Date(createdAt.getTime() + 24 * 3600_000),
-        },
-      });
-      storyCount++;
-    }
-  }
-  console.log(`  📸 stories: ${storyCount}`);
-
-  // --- Заметки (у 8 юзеров)
-  for (const author of users.slice(0, 8)) {
-    const createdAt = hoursAgo(rint(1, 20));
-    await prisma.note.create({
-      data: {
-        userId: author.id,
-        text: pick(['Слушаю музыку 🎧', 'Пишу код…', 'Кто в Душанбе?', 'Хорошего дня ✨']),
-        musicId: rnd() > 0.5 ? pickMusicId() : null,
-        bgColor: pick(['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A']),
-        createdAt,
-        expiresAt: new Date(createdAt.getTime() + 24 * 3600_000),
-      },
-    });
-  }
-  console.log('  📝 notes: 8');
-
-  // --- Чаты (5 диалогов с сообщениями)
-  for (let c = 0; c < 5; c++) {
-    const a = users[c];
-    const b = users[c + 10];
     const chat = await prisma.chat.create({
-      data: {
-        participants: { create: [{ userId: a.id }, { userId: b.id }] },
-      },
+      data: { isGroup: false, participants: { create: [{ userId: a }, { userId: b }] } },
+      select: { id: true },
     });
-    const msgCount = rint(4, 10);
-    for (let m = 0; m < msgCount; m++) {
+
+    const n = 3 + Math.floor(Math.random() * 4); // 3–6 сообщений
+    const now = Date.now();
+    for (let i = 0; i < n; i++) {
       await prisma.message.create({
         data: {
           chatId: chat.id,
-          senderId: m % 2 === 0 ? a.id : b.id,
+          senderId: i % 2 === 0 ? a : b,
+          text: CHAT_LINES[(i + made) % CHAT_LINES.length],
           type: MsgType.TEXT,
-          text: pick(['Привет!', 'Как дела?', 'Отправил файл', 'Увидимся завтра', 'Ок 👍']),
-          sentAt: hoursAgo(msgCount - m),
+          sentAt: new Date(now - (n - i) * 60_000),
         },
       });
     }
+    made++;
   }
-  console.log('  💬 chats: 5');
+  return made;
+}
 
-  console.log('✅ Seed завершён');
+// ─────────────────────────── main ───────────────────────────
+async function main(): Promise<void> {
+  console.log(`\n🌱 Импорт из softclub-API: ${BASE}\n`);
+  await login();
+  console.log('✔ Авторизация в softclub-API получена');
+
+  const passwordHash = await bcrypt.hash(PASSWORD, 10);
+
+  console.log('→ Тяну список пользователей…');
+  const users = await fetchAllUsers();
+  const knownIds = new Set(users.map((u) => u.id));
+  const userIds = users.map((u) => u.id);
+  console.log(`✔ Пользователей к импорту: ${users.length}`);
+
+  // Посты тянем ДО «шторма» профильных запросов — пока API «свежий».
+  console.log('→ Тяну посты…');
+  const posts = await fetchAllPosts(knownIds);
+  console.log(`✔ Постов найдено: ${posts.length}`);
+
+  console.log('→ Импорт пользователей и профилей…');
+  await upsertUsers(users, passwordHash);
+
+  console.log('→ Импорт постов (медиа, комментарии, лайки)…');
+  await importPosts(posts, userIds);
+  console.log(`✔ Постов импортировано: ${posts.length}`);
+
+  console.log('→ Импорт подписок (followers/following)…');
+  const follows = await importFollows(users, knownIds);
+  console.log(`✔ Связей подписки: ${follows}`);
+
+  console.log('→ Импорт историй…');
+  const stories = await importStories(users);
+  console.log(`✔ Историй импортировано: ${stories}`);
+
+  let chats = 0;
+  if (SEED_CHATS) {
+    console.log('→ Синтез чатов между взаимными подписчиками…');
+    chats = await synthesizeChats(knownIds);
+    console.log(`✔ Чатов создано: ${chats}`);
+  }
+
+  const [uc, pc, sc, fc, cc, mc] = await Promise.all([
+    prisma.user.count(),
+    prisma.post.count(),
+    prisma.story.count(),
+    prisma.follow.count(),
+    prisma.chat.count(),
+    prisma.message.count(),
+  ]);
+  console.log('\n═════════════ ИТОГ (вся база) ═════════════');
+  console.log(`  Пользователи: ${uc}`);
+  console.log(`  Посты:        ${pc}`);
+  console.log(`  Истории:      ${sc}`);
+  console.log(`  Подписки:     ${fc}`);
+  console.log(`  Чаты:         ${cc}  ·  Сообщения: ${mc}`);
+  console.log('═══════════════════════════════════════════');
+  console.log(`\n🔑 Пароль всех импортированных: «${PASSWORD}» · вход по userName.\n`);
 }
 
 main()
-  .catch((e: unknown) => {
-    console.error('❌ Seed failed:', e);
+  .catch((e) => {
+    console.error('💥 Seed упал:', e);
     process.exit(1);
   })
   .finally(() => void prisma.$disconnect());
