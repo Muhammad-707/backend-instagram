@@ -30,6 +30,7 @@ import { PostsModule } from './modules/posts/posts.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { SearchModule } from './modules/search/search.module';
 import { SocketModule } from './modules/socket/socket.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { StoriesModule } from './modules/stories/stories.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { UploadModule } from './modules/upload/upload.module';
@@ -74,6 +75,7 @@ import { UsersModule } from './modules/users/users.module';
     VerificationModule,
     AdminModule,
     LiveModule,
+    SettingsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

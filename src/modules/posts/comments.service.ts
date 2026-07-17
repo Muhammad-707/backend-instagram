@@ -5,6 +5,7 @@ import { AccessService } from '../../common/access/access.service';
 import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
+import { SettingsService } from '../settings/settings.service';
 import { UserBriefDto } from '../users/dto/users.dto';
 import { parseMentions } from './content-parser';
 import { CommentDto, CommentLikeToggleDto, DeletedDto } from './dto/comment.dto';
@@ -40,11 +41,14 @@ export class CommentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: AccessService,
+    private readonly settings: SettingsService,
     private readonly events: EventEmitter2,
   ) {}
 
   async add(userId: string, postId: number, text: string, parentId?: number): Promise<CommentDto> {
     const post = await this.loadVisiblePost(userId, postId);
+    // Политика автора: кто может комментировать + скрытые слова + ограничения.
+    await this.settings.assertCanComment(post.userId, userId, text);
 
     if (parentId !== undefined) {
       const parent = await this.prisma.comment.findUnique({

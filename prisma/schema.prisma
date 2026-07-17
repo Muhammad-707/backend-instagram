@@ -223,6 +223,10 @@ model User {
   noteLikes   NoteLike[]
   noteReplies NoteReply[]
 
+  settings          UserSettings?
+  restrictionsMade  RestrictedAccount[] @relation("RestrictBy")
+  restrictedByOthers RestrictedAccount[] @relation("RestrictTarget")
+
   chatParticipations ChatParticipant[]
   messages           Message[]
   messageReactions   MessageReaction[]
@@ -564,6 +568,55 @@ enum TagStatus {
   DECLINED // отмеченный отклонил → отметка скрыта
 }
 
+// Кто может отмечать / упоминать / писать мне (Настройки → Взаимодействие).
+enum InteractionPolicy {
+  EVERYONE // все
+  FOLLOWING // только те, на кого подписан Я (владелец настройки)
+  NOBODY // никто
+}
+
+// Кто может комментировать мои публикации.
+enum CommentPolicy {
+  EVERYONE // все
+  FOLLOWERS // мои подписчики
+  MUTUAL // взаимные подписки
+  OFF // комментарии выключены
+}
+
+// Настройки аккаунта: приватность взаимодействий, уведомления, язык.
+// Одна строка на пользователя (@id userId), создаётся лениво при первом чтении/записи.
+model UserSettings {
+  userId            String            @id
+  pushEnabled       Boolean           @default(true)
+  emailEnabled      Boolean           @default(true)
+  whoCanTag         InteractionPolicy @default(EVERYONE)
+  whoCanMention     InteractionPolicy @default(EVERYONE)
+  whoCanMessage     InteractionPolicy @default(EVERYONE)
+  whoCanComment     CommentPolicy     @default(EVERYONE)
+  allowGifComments  Boolean           @default(true)
+  allowStoryReshare Boolean           @default(true)
+  hiddenWords       String[]          @default([])
+  language          String            @default("ru")
+  updatedAt         DateTime          @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// «Аккаунты с ограничениями»: их комментарии видны только им, сообщения уходят
+// в запросы. Мягче блокировки — знакомый не узнает, что ограничен.
+model RestrictedAccount {
+  id           String   @id @default(uuid())
+  userId       String // кто ограничил
+  restrictedId String // кого ограничили
+  createdAt    DateTime @default(now())
+
+  user       User @relation("RestrictBy", fields: [userId], references: [id], onDelete: Cascade)
+  restricted User @relation("RestrictTarget", fields: [restrictedId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, restrictedId])
+  @@index([userId])
+}
+
 model PostTag {
   id        String    @id @default(uuid())
   postId    Int
@@ -637,11 +690,13 @@ model Mention {
   id        String   @id @default(uuid())
   postId    Int?
   commentId Int?
+  storyId   Int?
   userId    String
   createdAt DateTime @default(now())
 
   post    Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
   comment Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  story   Story?   @relation(fields: [storyId], references: [id], onDelete: Cascade)
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
@@ -679,6 +734,7 @@ model Story {
   reactions  StoryReaction[]
   replies    StoryReply[]
   highlights HighlightStory[]
+  mentions   Mention[]
   messages   Message[]        @relation("StoryOfMessage")
 
   @@index([userId, createdAt])

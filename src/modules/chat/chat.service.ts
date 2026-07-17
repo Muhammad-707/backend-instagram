@@ -14,6 +14,7 @@ import {
   ReportTargetType,
 } from '@prisma/client';
 import { OnlineMusicService } from '../music/online/online-music.service';
+import { SettingsService } from '../settings/settings.service';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
 import { buildCursorPage, CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
@@ -116,6 +117,7 @@ export class ChatService {
     private readonly presence: PresenceService,
     private readonly realtime: RealtimeService,
     private readonly online: OnlineMusicService,
+    private readonly settings: SettingsService,
     private readonly config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -449,8 +451,13 @@ export class ChatService {
     });
     const chat = existing ?? (await this.chatUtil.findOrCreateDirectChat(userId, receiverUserId));
 
-    // Подписан на собеседника — переписка сразу в основных.
-    if (await this.access.isFollowing(userId, receiverUserId)) {
+    // Подписан на собеседника И его настройка «кто может писать» это разрешает —
+    // переписка сразу в основных. По умолчанию (EVERYONE) поведение прежнее; если
+    // получатель ограничил до FOLLOWING/NOBODY — уходит в «Запросы».
+    if (
+      (await this.access.isFollowing(userId, receiverUserId)) &&
+      (await this.settings.canMessage(receiverUserId, userId))
+    ) {
       return { id: chat.id, existed: existing !== null, isRequest: false };
     }
 

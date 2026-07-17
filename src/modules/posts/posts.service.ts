@@ -27,6 +27,7 @@ import { MediaService } from '../../storage/media.service';
 import { StorageService } from '../../storage/storage.service';
 import { UploadedFile } from '../../storage/storage.types';
 import { UserBriefDto } from '../users/dto/users.dto';
+import { SettingsService } from '../settings/settings.service';
 import { parseHashtags, parseMentions } from './content-parser';
 import {
   ArchiveDto,
@@ -101,6 +102,7 @@ export class PostsService {
     private readonly events: EventEmitter2,
     private readonly online: OnlineMusicService,
     private readonly attachedMusic: AttachedMusicService,
+    private readonly settings: SettingsService,
     config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -158,6 +160,9 @@ export class PostsService {
       // (`provider`+`externalId`, GET /music/online) — тогда импортируем его.
       const musicId = await this.resolveMusicId(dto);
 
+      // Настройка «кто может отмечать меня»: отфильтровываем тех, кто запретил.
+      const taggable = await this.filterTaggable(userId, dto.taggedUserIds);
+
       const post = await this.prisma.post.create({
         data: {
           userId,
@@ -166,12 +171,12 @@ export class PostsService {
           musicId,
           isReel: dto.isReel ?? false,
           media: { create: mediaRows },
-          ...(dto.taggedUserIds?.length
+          ...(taggable.length
             ? {
                 taggedUsers: {
                   // Своя отметка сразу ACCEPTED (не спрашиваем себя же), чужая — PENDING:
                   // отмеченный подтвердит через POST /posts/{id}/tag/accept.
-                  create: dto.taggedUserIds.map((id) => ({
+                  create: taggable.map((id) => ({
                     userId: id,
                     status: id === userId ? TagStatus.ACCEPTED : TagStatus.PENDING,
                   })),
@@ -185,7 +190,7 @@ export class PostsService {
       // Хэштеги, упоминания и уведомления — после создания поста, ему нужен id.
       await this.linkHashtags(post.id, dto.caption);
       await this.linkMentions(post.id, userId, dto.caption);
-      this.notifyTagged(post.id, userId, dto.taggedUserIds);
+      this.notifyTagged(post.id, userId, taggable);
       await this.notifyNewPost(post.id, userId);
 
       if (musicId) {
@@ -581,9 +586,20 @@ export class PostsService {
     });
 
     for (const u of users) {
+      // Настройка «кто может @упоминать меня»: если запрещено — не создаём упоминание.
+      if (!(await this.settings.canMention(u.id, actorId))) continue;
       await this.prisma.mention.create({ data: { postId, userId: u.id } });
       this.notify(u.id, actorId, NotifType.MENTION, { postId });
     }
+  }
+
+  /** Оставляет из отмеченных только тех, чья настройка «кто может отмечать меня» это разрешает. */
+  private async filterTaggable(actorId: string, taggedUserIds?: string[]): Promise<string[]> {
+    if (!taggedUserIds?.length) return [];
+    const checks = await Promise.all(
+      taggedUserIds.map(async (id) => ((await this.settings.canTag(id, actorId)) ? id : null)),
+    );
+    return checks.filter((id): id is string => id !== null);
   }
 
   private notifyTagged(postId: number, actorId: string, taggedUserIds?: string[]): void {

@@ -15,6 +15,8 @@ import { ChatUtilService } from '../../common/chat/chat-util.service';
 import { AttachedMusicService } from '../music/attached-music.service';
 import { OnlineMusicService } from '../music/online/online-music.service';
 import { NOTIFY_EVENT, NotifyPayload } from '../notifications/notification.events';
+import { parseMentions } from '../posts/content-parser';
+import { SettingsService } from '../settings/settings.service';
 import {
   DeleteExpiredStoryPayload,
   JOB_DELETE_EXPIRED_STORY,
@@ -94,6 +96,7 @@ export class StoriesService {
     @InjectQueue(STORIES_QUEUE) private readonly queue: Queue<DeleteExpiredStoryPayload>,
     private readonly online: OnlineMusicService,
     private readonly attachedMusic: AttachedMusicService,
+    private readonly settings: SettingsService,
     config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -163,6 +166,7 @@ export class StoriesService {
         });
         created.push(story.id);
         await this.scheduleDeletion(story.id, expiresAt);
+        await this.notifyStoryMentions(story.id, userId, overlays);
       }
 
       if (musicId) {
@@ -213,6 +217,7 @@ export class StoriesService {
       select: { id: true },
     });
     await this.scheduleDeletion(story.id, expiresAt);
+    await this.notifyStoryMentions(story.id, userId, overlays);
 
     const [dtoResult] = await this.loadMany(userId, [story.id]);
     return dtoResult;
@@ -602,6 +607,44 @@ export class StoriesService {
     } catch {
       throw new BadRequestException('overlays: невалидный JSON');
     }
+  }
+
+  /**
+   * Упоминания в истории: @username в тексте overlays (текст/стикеры) →
+   * уведомление MENTION + запись Mention(storyId). Уважает настройку
+   * «кто может @упоминать меня» и не шлёт уведомление самому себе.
+   */
+  private async notifyStoryMentions(
+    storyId: number,
+    actorId: string,
+    overlays: Prisma.InputJsonValue | null,
+  ): Promise<void> {
+    if (!overlays) return;
+    const userNames = parseMentions(this.overlaysText(overlays));
+    if (userNames.length === 0) return;
+
+    const users = await this.prisma.user.findMany({
+      where: { userName: { in: userNames }, isDeleted: false },
+      select: { id: true },
+    });
+    for (const u of users) {
+      if (u.id === actorId) continue;
+      if (!(await this.settings.canMention(u.id, actorId))) continue;
+      await this.prisma.mention.create({ data: { storyId, userId: u.id } });
+      this.notify(u.id, actorId, NotifType.MENTION, storyId);
+    }
+  }
+
+  /** Собирает все строковые значения overlays в один текст — для поиска @упоминаний. */
+  private overlaysText(overlays: unknown): string {
+    const out: string[] = [];
+    const walk = (v: unknown): void => {
+      if (typeof v === 'string') out.push(v);
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+    };
+    walk(overlays);
+    return out.join(' ');
   }
 
   private notify(userId: string, actorId: string, type: NotifType, storyId: number): void {
