@@ -93,7 +93,7 @@ export class StorageService implements OnModuleInit {
       const stream = cloudinary.uploader.upload_stream(
         {
           public_id: publicId,
-          resource_type: resourceType,
+          resource_type: resourceType as 'image' | 'video' | 'raw' | 'auto',
           overwrite: true,
         },
         (error, result) => {
@@ -297,14 +297,14 @@ export class StorageService implements OnModuleInit {
   }
 
   /** Guess Cloudinary resource_type from MIME type. */
-  private guessResourceType(mime: string): string {
+  private guessResourceType(mime: string): 'image' | 'video' | 'raw' {
     if (mime.startsWith('image/')) return 'image';
     if (mime.startsWith('video/')) return 'video';
     return 'raw'; // audio and everything else
   }
 
   /** Guess Cloudinary resource_type from file extension. */
-  private guessResourceTypeFromExt(ext: string): string {
+  private guessResourceTypeFromExt(ext: string): 'image' | 'video' | 'raw' {
     const mime = FORMAT_TO_MIME[ext];
     if (mime) return this.guessResourceType(mime);
     // Fallback based on common folder prefixes in keys
