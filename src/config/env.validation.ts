@@ -109,6 +109,9 @@ function buildSchema(isProd: boolean): Joi.ObjectSchema<Record<string, unknown>>
     // ---- SMTP ----
     SMTP_HOST: requiredInProd(Joi.string(), 'localhost'),
     SMTP_PORT: Joi.number().port().default(1025),
+    // Явный TLS: 'true' (implicit TLS, порт 465) / 'false' (STARTTLS или без TLS).
+    // Не задан — режим выводится из порта (465 → secure).
+    SMTP_SECURE: Joi.string().valid('true', 'false').optional(),
     SMTP_USER: Joi.string().allow('').default(''),
     SMTP_PASS: Joi.string().allow('').default(''),
     SMTP_FROM: Joi.string().default('Instagram <no-reply@instagram.local>'),
