@@ -235,6 +235,7 @@ model User {
   storyReplies     StoryReply[]
   stickerResponses StoryStickerResponse[]
   highlights       Highlight[]
+  addYoursPrompts  AddYoursPrompt[]       @relation("AddYoursCreator")
 
   notes       Note[]
   noteLikes   NoteLike[]
@@ -412,24 +413,28 @@ model CloseFriend {
 // ============================================================
 
 model Post {
-  id          Int        @id @default(autoincrement())
-  userId      String
-  caption     String?    @db.VarChar(2200)
-  locationId  Int?
-  musicId     Int?
-  isReel      Boolean    @default(false)
-  isArchived  Boolean    @default(false)
-  status      PostStatus @default(PUBLISHED)
-  scheduledAt DateTime? // для SCHEDULED — когда опубликовать
-  pinnedAt    DateTime? // для закрепления постов в профиле (max 3)
-  hideLikeCount Boolean   @default(false) // скрыть счетчик лайков
-  commentsDisabled Boolean @default(false) // выключить комментарии
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id               Int        @id @default(autoincrement())
+  userId           String
+  caption          String?    @db.VarChar(2200)
+  locationId       Int?
+  musicId          Int?
+  isReel           Boolean    @default(false)
+  isArchived       Boolean    @default(false)
+  remixOfId        Int? // reel, снятый рядом с чужим reel («Remix of @author»)
+  status           PostStatus @default(PUBLISHED)
+  scheduledAt      DateTime? // для SCHEDULED — когда опубликовать
+  pinnedAt         DateTime? // для закрепления постов в профиле (max 3)
+  hideLikeCount    Boolean    @default(false) // скрыть счетчик лайков
+  commentsDisabled Boolean    @default(false) // выключить комментарии
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
   music    Music?    @relation(fields: [musicId], references: [id], onDelete: SetNull)
+  // Ремикс: reel снят «рядом» с чужим reel. Удаление оригинала не сносит ремикс (SetNull).
+  remixOf  Post?     @relation("PostRemix", fields: [remixOfId], references: [id], onDelete: SetNull)
+  remixes  Post[]    @relation("PostRemix")
 
   media       PostMedia[]
   likes       PostLike[]
@@ -449,6 +454,8 @@ model Post {
   @@index([locationId])
   @@index([musicId])
   @@index([userId, pinnedAt])
+  @@index([userId, isArchived, status, createdAt])
+  @@index([remixOfId])
 }
 
 model PostMedia {
@@ -531,6 +538,7 @@ model PostView {
   id       String   @id @default(uuid())
   postId   Int
   userId   String
+  source   String? // откуда пришёл просмотр: feed/explore/profile/hashtag/reels — для insights
   viewedAt DateTime @default(now())
 
   post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
@@ -538,6 +546,7 @@ model PostView {
 
   @@unique([postId, userId])
   @@index([userId, viewedAt])
+  @@index([postId, source])
 }
 
 model Collection {
@@ -655,13 +664,13 @@ model PostTag {
 }
 
 model Comment {
-  id        Int      @id @default(autoincrement())
+  id        Int       @id @default(autoincrement())
   postId    Int
   userId    String
   parentId  Int?
-  text      String   @db.VarChar(2200)
+  text      String    @db.VarChar(2200)
   pinnedAt  DateTime? // для закрепления комментариев в посте
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   post     Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
   user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -747,12 +756,17 @@ model Story {
   closeFriendsOnly Boolean   @default(false)
   saveToArchive    Boolean   @default(true)
   fromPostId       Int?
+  addYoursPromptId String? // ← ответ в цепочку «Add Yours» (репост-стикер)
   createdAt        DateTime  @default(now())
   expiresAt        DateTime
 
-  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  music    Music? @relation(fields: [musicId], references: [id], onDelete: SetNull)
-  fromPost Post?  @relation("StoryFromPost", fields: [fromPostId], references: [id], onDelete: SetNull)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  music          Music?          @relation(fields: [musicId], references: [id], onDelete: SetNull)
+  fromPost       Post?           @relation("StoryFromPost", fields: [fromPostId], references: [id], onDelete: SetNull)
+  // «Add Yours»: история отвечает на промпт (цепочка). Удаление промпта не сносит историю.
+  addYoursPrompt AddYoursPrompt? @relation("AddYoursResponses", fields: [addYoursPromptId], references: [id], onDelete: SetNull)
+  // Обратная сторона: если эта история — та, где промпт был создан.
+  addYoursOrigin AddYoursPrompt? @relation("AddYoursOrigin")
 
   views      StoryView[]
   likes      StoryLike[]
@@ -765,6 +779,24 @@ model Story {
 
   @@index([userId, createdAt])
   @@index([expiresAt])
+  @@index([addYoursPromptId])
+}
+
+// «Add Yours» — цепочка-эстафета в историях: автор создаёт промпт («Добавь своё…»),
+// остальные отвечают своими историями. GET /stories/add-yours/:id — лента ответивших.
+model AddYoursPrompt {
+  id            String   @id @default(uuid())
+  text          String   @db.VarChar(80)
+  emoji         String?
+  creatorId     String
+  originStoryId Int      @unique // история, в которой промпт создан
+  createdAt     DateTime @default(now())
+
+  creator     User    @relation("AddYoursCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  originStory Story   @relation("AddYoursOrigin", fields: [originStoryId], references: [id], onDelete: Cascade)
+  responses   Story[] @relation("AddYoursResponses")
+
+  @@index([creatorId])
 }
 
 model StoryView {
@@ -950,14 +982,14 @@ model NoteReply {
 // ============================================================
 
 model Chat {
-  id        Int      @id @default(autoincrement())
-  isGroup   Boolean  @default(false)
-  title     String?
-  theme     String   @default("default")
+  id         Int      @id @default(autoincrement())
+  isGroup    Boolean  @default(false)
+  title      String?
+  theme      String   @default("default")
   // Vanish mode (как в IG): пока включён, новые сообщения помечаются vanishing и
   // исчезают у обоих, как только увидевший их закрыл чат (POST /chats/:id/close).
-  vanishMode Boolean @default(false)
-  createdAt DateTime @default(now())
+  vanishMode Boolean  @default(false)
+  createdAt  DateTime @default(now())
 
   participants ChatParticipant[]
   messages     Message[]
@@ -985,29 +1017,29 @@ model ChatParticipant {
 }
 
 model Message {
-  id           Int       @id @default(autoincrement())
-  chatId       Int
-  senderId     String
-  text         String?   @db.VarChar(2000)
-  type         MsgType   @default(TEXT)
-  mediaUrl     String?
-  duration     Float?
-  replyToId    Int?
-  sharedPostId Int?
-  storyId      Int?
-  noteId       Int?
-  musicId      Int? // трек, отправленный в чат (type=MUSIC_SHARE)
-  callId       String? // звонок, к которому относится строка (type=CALL)
-  noteSnapshot String?   @db.VarChar(60) // заметка умрёт через 24ч — превью в чате не должно сломаться
-  editedAt     DateTime?
-  isDeleted    Boolean   @default(false)
+  id               Int       @id @default(autoincrement())
+  chatId           Int
+  senderId         String
+  text             String?   @db.VarChar(2000)
+  type             MsgType   @default(TEXT)
+  mediaUrl         String?
+  duration         Float?
+  replyToId        Int?
+  sharedPostId     Int?
+  storyId          Int?
+  noteId           Int?
+  musicId          Int? // трек, отправленный в чат (type=MUSIC_SHARE)
+  callId           String? // звонок, к которому относится строка (type=CALL)
+  noteSnapshot     String?   @db.VarChar(60) // заметка умрёт через 24ч — превью в чате не должно сломаться
+  editedAt         DateTime?
+  isDeleted        Boolean   @default(false)
   // Vanish mode: сообщение отправлено в исчезающем режиме — при закрытии чата
   // увидевшим оно удаляется физически (не soft-delete: следа «удалено» тоже нет).
-  vanishing    Boolean   @default(false)
+  vanishing        Boolean   @default(false)
   // «Просмотр один раз» для медиа: после открытия получателем mediaUrl прячется.
   viewOnce         Boolean   @default(false)
   viewOnceOpenedAt DateTime?
-  sentAt       DateTime  @default(now())
+  sentAt           DateTime  @default(now())
 
   chat       Chat         @relation(fields: [chatId], references: [id], onDelete: Cascade)
   sender     User         @relation(fields: [senderId], references: [id], onDelete: Cascade)

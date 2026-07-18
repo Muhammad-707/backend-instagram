@@ -22,6 +22,7 @@ import {
   JOB_DELETE_EXPIRED_STORY,
   STORIES_QUEUE,
 } from '../../jobs/jobs.constants';
+import { buildCursorPage, CursorDto } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FileValidator } from '../../storage/file-validator';
 import { MediaService } from '../../storage/media.service';
@@ -29,9 +30,13 @@ import { StorageService } from '../../storage/storage.service';
 import { UploadedFile } from '../../storage/storage.types';
 import { UserBriefDto } from '../users/dto/users.dto';
 import {
+  AddYoursFeedDto,
+  AddYoursPromptDto,
+  CreateAddYoursDto,
   CreateStoryDto,
   ReactionSentDto,
   StoryDto,
+  StoryInsightsDto,
   StoryLikeToggleDto,
   StoryRailItemDto,
   StoryViewerDto,
@@ -61,6 +66,7 @@ const STORY_SELECT = {
   closeFriendsOnly: true,
   saveToArchive: true,
   fromPostId: true,
+  addYoursPromptId: true,
   createdAt: true,
   expiresAt: true,
   music: {
@@ -133,6 +139,9 @@ export class StoriesService {
       // импорт внутри цикла ходил бы во внешний каталог на каждый файл.
       const musicId = await this.resolveMusicId(dto);
 
+      // «Add Yours»: эти истории отвечают в существующую цепочку.
+      const addYoursPromptId = await this.resolveAddYoursPrompt(dto.addYoursPromptId);
+
       for (const v of validated) {
         const processed = await this.media.process(v);
         const key = this.storage.buildKey(v.kind, processed.ext);
@@ -160,6 +169,7 @@ export class StoriesService {
             filter: dto.filter ?? null,
             closeFriendsOnly: dto.closeFriendsOnly ?? false,
             saveToArchive: dto.saveToArchive ?? true,
+            addYoursPromptId,
             expiresAt,
           },
           select: { id: true },
@@ -470,6 +480,24 @@ export class StoriesService {
     }));
   }
 
+  /** Аналитика истории (Фаза 8) — только автору. */
+  async insights(userId: string, id: number): Promise<StoryInsightsDto> {
+    const story = await this.prisma.story.findUnique({ where: { id }, select: { userId: true } });
+    if (!story) throw new NotFoundException('История не найдена');
+    if (story.userId !== userId) throw new ForbiddenException('Аналитика видна только автору');
+
+    const [views, likes, reactions, replies] = await Promise.all([
+      this.prisma.storyView.count({ where: { storyId: id } }),
+      this.prisma.storyLike.count({ where: { storyId: id } }),
+      this.prisma.storyReaction.count({ where: { storyId: id } }),
+      this.prisma.storyReply.count({ where: { storyId: id } }),
+    ]);
+    const engagementRate =
+      views > 0 ? Math.round(((likes + reactions + replies) / views) * 1000) / 1000 : 0;
+
+    return { views, likes, reactions, replies, engagementRate };
+  }
+
   async remove(userId: string, id: number): Promise<{ deleted: boolean }> {
     const story = await this.prisma.story.findUnique({
       where: { id },
@@ -484,6 +512,122 @@ export class StoriesService {
       if (key) await this.storage.remove(key).catch(() => undefined);
     }
     return { deleted: true };
+  }
+
+  // ─────────────────────── «Add Yours» (цепочка-эстафета) ───────────────────────
+
+  /**
+   * Создать промпт «Add Yours» на своей активной истории («Добавь своё…»).
+   * Сама история-инициатор становится первым звеном цепочки (её addYoursPromptId = новый промпт).
+   */
+  async createAddYoursPrompt(
+    userId: string,
+    storyId: number,
+    dto: CreateAddYoursDto,
+  ): Promise<AddYoursPromptDto> {
+    const story = await this.prisma.story.findUnique({
+      where: { id: storyId },
+      select: { userId: true, expiresAt: true, addYoursOrigin: { select: { id: true } } },
+    });
+    if (!story) throw new NotFoundException('История не найдена');
+    if (story.userId !== userId) throw new ForbiddenException('Это не ваша история');
+    if (story.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('История истекла — на ней нельзя создать «Add Yours»');
+    }
+    if (story.addYoursOrigin) {
+      throw new BadRequestException('На этой истории уже есть промпт «Add Yours»');
+    }
+
+    // Промпт + привязка истории-инициатора к нему — в одной транзакции.
+    const prompt = await this.prisma.$transaction(async (tx) => {
+      const p = await tx.addYoursPrompt.create({
+        data: { text: dto.text, emoji: dto.emoji ?? null, creatorId: userId, originStoryId: storyId },
+        select: { id: true },
+      });
+      await tx.story.update({ where: { id: storyId }, data: { addYoursPromptId: p.id } });
+      return p;
+    });
+
+    return this.loadPrompt(prompt.id);
+  }
+
+  /**
+   * Лента цепочки: промпт-шапка + истории-ответы (автор промпта — первым по времени).
+   * Показываем только активные (неистёкшие) истории; закрытые аккаунты, блок и
+   * close-friends фильтруются как в остальных лентах историй.
+   */
+  async addYoursFeed(
+    viewerId: string,
+    promptId: string,
+    dto: CursorDto,
+  ): Promise<AddYoursFeedDto> {
+    const prompt = await this.loadPrompt(promptId);
+
+    const hidden = await this.access.blockedIds(viewerId);
+    const rows = await this.prisma.story.findMany({
+      where: {
+        addYoursPromptId: promptId,
+        expiresAt: { gt: new Date() },
+        userId: { notIn: hidden },
+        // Приватные авторы — только если я принятый подписчик (или это я сам).
+        OR: [
+          { user: { isPrivate: false } },
+          { userId: viewerId },
+          {
+            user: {
+              isPrivate: true,
+              followers: { some: { followerId: viewerId, status: FollowStatus.ACCEPTED } },
+            },
+          },
+        ],
+      },
+      select: STORY_SELECT,
+      orderBy: { id: 'asc' }, // origin-история создана первой → меньший id → первой в ленте
+      take: dto.limit + 1,
+      ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
+    });
+
+    // close-friends истории чужих авторов — только если я у них в близких.
+    const visible = await this.filterCloseFriends(viewerId, rows);
+    const page = buildCursorPage(visible, dto.limit, (r) => r.id);
+    const items = await this.decorate(viewerId, page.items);
+
+    return { prompt, items, nextCursor: page.nextCursor, hasMore: page.hasMore };
+  }
+
+  private async resolveAddYoursPrompt(promptId?: string): Promise<string | null> {
+    if (!promptId) return null;
+    const prompt = await this.prisma.addYoursPrompt.findUnique({
+      where: { id: promptId },
+      select: { id: true },
+    });
+    if (!prompt) throw new NotFoundException('Промпт «Add Yours» не найден');
+    return prompt.id;
+  }
+
+  private async loadPrompt(promptId: string): Promise<AddYoursPromptDto> {
+    const prompt = await this.prisma.addYoursPrompt.findUnique({
+      where: { id: promptId },
+      select: {
+        id: true,
+        text: true,
+        emoji: true,
+        originStoryId: true,
+        createdAt: true,
+        creator: { select: USER_BRIEF },
+        _count: { select: { responses: true } },
+      },
+    });
+    if (!prompt) throw new NotFoundException('Промпт «Add Yours» не найден');
+    return {
+      id: prompt.id,
+      text: prompt.text,
+      emoji: prompt.emoji,
+      creator: this.toBrief(prompt.creator),
+      originStoryId: prompt.originStoryId,
+      responsesCount: prompt._count.responses,
+      createdAt: prompt.createdAt,
+    };
   }
 
   // ─────────────────────── helpers ───────────────────────
@@ -592,6 +736,7 @@ export class StoriesService {
       closeFriendsOnly: row.closeFriendsOnly,
       saveToArchive: row.saveToArchive,
       fromPostId: row.fromPostId,
+      addYoursPromptId: row.addYoursPromptId,
       isViewed,
       isLiked,
       likesCount: row._count.likes,

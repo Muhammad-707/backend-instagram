@@ -36,6 +36,8 @@ import { ProfileModule } from './modules/profile/profile.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { UsersModule } from './modules/users/users.module';
 
+import { FeedModule } from './modules/feed/feed.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -76,6 +78,7 @@ import { UsersModule } from './modules/users/users.module';
     AdminModule,
     LiveModule,
     SettingsModule,
+    FeedModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

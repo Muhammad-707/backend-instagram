@@ -747,6 +747,49 @@
 > - **view-once медиа никогда не отдаётся в общем списке получателю** — ни до, ни после открытия; единственный раз его возвращает `open`. Автор всегда видит своё (у отправителя оно остаётся).
 > - ⚠️ **view-once с реальной загрузкой файла не гонялся** (Cloudinary в этом окружении не сконфигурирован — `Cloudinary init failed`); медиа-сообщение заведено напрямую в БД, а весь цикл open/скрытие/повторное открытие проверен по HTTP.
 
+### Фаза 7 — Ремиксы Reels и «Add Yours» 🟢 ✅ (2026-07-18)
+- [x] Схема: `Post.remixOfId` (self-relation, SetNull) + `Story.addYoursPromptId` + модель `AddYoursPrompt` (id, text, emoji, creatorId, originStoryId @unique) · миграция `20260718154052_posts_stories_remix_addyours`
+- [x] **Ремикс:** `CreatePostDto.remixOfId` + валидация (`resolveRemixOf`: оригинал — существующий опубликованный **reel**, доступный зрителю; ремикс фото → 400) · `PostDto.remixOf {id, author}` для «Remix of @author»
+- [x] `GET /posts/:id/remixes` — reels, снятые «рядом» с этим reel (закрытые/блок исключены)
+- [x] **«Add Yours»:** `POST /stories/:id/add-yours` (создать промпт на своей истории; она — первое звено), `GET /stories/add-yours/:promptId` (лента цепочки, origin-first, пагинация) · `CreateStoryDto.addYoursPromptId` — ответ в цепочку
+- [x] **«Use this audio»:** `GET /music/:id/reels` — все reels с треком (forwardRef Music↔Posts; закрытые аккаунты/блок исключены)
+
+**Проверено живыми запросами (app :4100, local docker DB; reels/истории заведены в БД — Cloudinary тут нет):**
+- Ремикс: `GET /posts/730` → `remixOf={id:729, author:daler}`; `GET /posts/729/remixes` → `[730@eraj]`.
+- «Use audio»: `GET /music/111/reels` → `[729,730,731]`, приватный reel 732 (никто не подписан) **исключён**.
+- «Add Yours»: промпт на своей истории 617 (creator=eraj); чужой → **403**, повтор → **400** «уже есть промпт»; лента `GET /stories/add-yours/:id` → `items=617,618,619` (**origin-story первой**), responsesCount=3.
+- `npm run build` → зелёный.
+
+> **Заметки Фазы 7:**
+> - **Ремикс = self-relation `Post.remixOfId`** с `onDelete: SetNull`: удаление оригинала не сносит ремиксы, просто рвёт ссылку (как и `remixOf` в DTO станет null). Ремиксить можно только reel (видео) — фото-ремиксов в IG нет.
+> - **`AddYoursPrompt.originStoryId @unique`**: на одной истории — максимум один промпт (двойной `POST /add-yours` → 400). История-инициатор сама получает `addYoursPromptId = промпт`, поэтому в ленте цепочки идёт первой (сортировка по `id asc` = по времени).
+> - **`Story.addYoursPromptId onDelete: SetNull`**: истёк/удалён промпт — история-ответ выживает, просто выпадает из цепочки.
+> - **Music↔Posts — `forwardRef`**: PostsModule и так тянет MusicModule (трек в посте), а «Use this audio» требует обратной ссылки (reels через PostsService). Круг разорван forwardRef с обеих сторон + `@Inject(forwardRef(() => PostsService))` в MusicController.
+> - ⚠️ **Уведомлений в этой фазе нет** (сознательно, чтобы не расширять enum `NotifType` и тест-поверхность): в IG автор reel/промпта получает пуш о ремиксе/ответе — это отдельным заходом при желании.
+> - ⚠️ **Пути создания через `POST /posts` и `POST /stories` (join в цепочку) не гонялись по HTTP** — обе требуют загрузки медиа, а Cloudinary в окружении нет. Валидация (`resolveRemixOf`/`resolveAddYoursPrompt`) покрыта сборкой; данные заведены в БД, а чтение/гейтинг/лента проверены по HTTP.
+
+### Фаза 8 — Инсайты для авторов (Insights) 🟢 ✅ (2026-07-18)
+- [x] Схема: `PostView.source` (feed/explore/profile/hashtag/reels — источник трафика) + `@@index([postId, source])` · миграция `20260718172452_postview_source`
+- [x] `GET /posts/:id/insights` (только автору): reach (уникальные зрители), likes/comments/saves/shares, engagementRate, **подписчики vs не-подписчики**, топ-источники
+- [x] `GET /stories/:id/insights` (только автору): views, likes, reactions, replies, engagementRate
+- [x] `GET /profile/me/insights?period=7d|30d|90d`: followersGained, profileViews, postsPublished, accountsReached, accountsEngaged
+- [x] `POST /posts/:id/view?source=…` — источник пишется при первом просмотре (`ViewQueryDto`, enum-валидация)
+
+**Проверено живыми запросами (app :4200, local docker DB, seed-данные):**
+- `GET /posts/730/insights` (eraj) → `reach=2, likes=1, engagementRate=0.5, fromFollowers=1, fromNonFollowers=1, sources=[explore:1, feed:1]` — **разбивка источников и подписчиков работает**.
+- Чужой (daler) на insights → **403** «Это не ваша публикация».
+- `GET /stories/617/insights` → `views=1, likes=1, engagementRate=1`.
+- `GET /profile/me/insights?period=30d` → `followersGained=7, postsPublished=5, accountsReached=2, accountsEngaged=49`.
+- `npm run build` → зелёный.
+
+> **Заметки Фазы 8:**
+> - **Считаем из СЫРЫХ таблиц** (`PostView/StoryView/PostLike/Comment/Favorite/Share/Follow/ProfileView`), отдельного стораджа метрик нет — аналитика всегда актуальна, не расходится с реальностью.
+> - **`source` — обычная строка + enum-валидация в DTO** (не Prisma-enum): источники могут меняться, лишняя миграция на каждый новый source не нужна. Пишется только при первом просмотре (повторный не перетирает).
+> - **engagementRate = engagements / reach**, округление до 3 знаков; при reach=0 → 0 (без деления на ноль).
+> - **`fromFollowers`** — пересечение зрителей с принятыми подписчиками автора в памяти (охваты постов невелики); для аккаунт-инсайтов reach/engaged — `distinct userId` на стороне БД.
+> - **Только автору/себе** — insights поста/истории проверяют владельца (403), профиль-инсайты всегда о `me` из JWT.
+> - ⚠️ **Демография и «exits/forward» истории не считаем** — в БД нет пола/гео зрителей и трекинга перелистываний; в остальном разбивки по ТЗ покрыты.
+
 
 ---
 
@@ -762,9 +805,25 @@
 | **Spotify-каталог** | 403 `Active premium subscription required for the owner of the app` — ограничение аккаунта владельца | Premium у владельца Spotify-приложения. **Пользователя не блокирует**: поиск работает через Deezer |
 | **Регистрация по одному телефону** | SMS-провайдера нет, код сброса уходит только на email | сознательное решение, `docs/TZ.md §5.1` |
 
-**Состояние на 2026-07-17:** 190 endpoints · 56 моделей · 19 enum'ов · 8 миграций ·
+**Состояние на 2026-07-18:** 191 endpoints · 56 моделей · 19 enum'ов · 9 миграций ·
 `npm run verify:all` → exit 0 · образ собирается (494с с нуля, 3с с кэшем) и проверен живьём.
 
 **Деплой:** чеклист Render — `docs/DEPLOY_RENDER.md` (14 обязательных переменных сняты с самой
 схемы валидации, не с памяти). Прежний сервис `backend-instagram-kvv4` отдаёт
 `x-render-routing: no-server` — его нет; поднимается заново.
+
+---
+
+### Фаза 8: Алгоритмы ленты и Главная страница (Phase 8: Feed Algorithms and Home Page) ✅
+- [x] Оптимизация схемы: composite index `@@index([userId, isArchived, status, createdAt])` на модели `Post` для быстрой выборки кандидатов ленты.
+- [x] Создан `FeedService` (`src/modules/feed/feed.service.ts`) с методом `getFeed(userId, dto)`.
+- [x] Создан `FeedController` (`src/modules/feed/feed.controller.ts`) с эндпоинтом `GET /feed` и поддержкой курсорной пагинации.
+- [x] Интеграция: новый модуль `FeedModule` импортирует `PostsModule` для использования `PostsService.feed` (которая реализует ранжирование по affinity, recency, engagement и seen).
+
+### Phase 9: Real-time Direct Messaging (Chat) ✅
+- [x] Схема БД: Модели `Chat` (Conversation), `ChatParticipant` (связь участников), `Message` (отправитель, контент, chatId/conversationId, тип сообщения, vanishing, viewOnce).
+- [x] Оптимизация и индексы: Добавлен composite index `@@index([chatId, sentAt])` на модель `Message` для быстрого получения сообщений в чате по курсору и сортировки.
+- [x] Логика и валидация: Созданы `ChatService` и `ChatController` с методами отправки сообщений, получением inbox (`list` / `getConversations`), получением истории сообщений (`messages` / `getMessages`) с курсорной пагинацией. Валидация входных данных через `SendMessageDto` и DTO-сериализация.
+- [x] Дополнительно: Поддержка групповых чатов, WebRTC звонков, Vanish Mode, реакций на сообщения, тем оформления и никнеймов.
+
+

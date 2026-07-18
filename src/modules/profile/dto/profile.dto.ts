@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -13,6 +14,38 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+
+export const INSIGHTS_PERIODS = ['7d', '30d', '90d'] as const;
+
+export class ProfileInsightsQueryDto {
+  @ApiPropertyOptional({ enum: INSIGHTS_PERIODS, default: '7d', description: 'Период аналитики' })
+  @IsOptional()
+  @IsIn(INSIGHTS_PERIODS as unknown as string[])
+  period?: string;
+}
+
+export class ProfileInsightsDto {
+  @ApiProperty({ example: '7d' })
+  period!: string;
+
+  @ApiProperty({ example: 7, description: 'Дней в периоде' })
+  days!: number;
+
+  @ApiProperty({ example: 34, description: 'Новых подписчиков за период' })
+  followersGained!: number;
+
+  @ApiProperty({ example: 512, description: 'Просмотров профиля за период' })
+  profileViews!: number;
+
+  @ApiProperty({ example: 6, description: 'Опубликовано постов за период' })
+  postsPublished!: number;
+
+  @ApiProperty({ example: 1240, description: 'Уникальных аккаунтов, посмотревших мои посты' })
+  accountsReached!: number;
+
+  @ApiProperty({ example: 320, description: 'Уникальных аккаунтов, взаимодействовавших (лайк/коммент/сохр/шер)' })
+  accountsEngaged!: number;
+}
 import { CursorDto } from '../../../common/pagination/cursor.dto';
 
 const USERNAME_RE = /^[a-zA-Z0-9._]+$/;

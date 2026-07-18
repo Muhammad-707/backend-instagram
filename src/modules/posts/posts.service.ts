@@ -48,6 +48,7 @@ import {
   LikeToggleDto,
   MAX_MEDIA,
   PostDto,
+  PostInsightsDto,
   ShareDto,
   ShareResultDto,
   TagActionDto,
@@ -73,6 +74,9 @@ const POST_SELECT = {
   caption: true,
   isReel: true,
   isArchived: true,
+  remixOfId: true,
+  // Оригинальный reel, если это ремикс — для «Remix of @author» в DTO.
+  remixOf: { select: { id: true, user: { select: USER_BRIEF } } },
   status: true,
   scheduledAt: true,
   pinnedAt: true,
@@ -180,6 +184,10 @@ export class PostsService {
       // (`provider`+`externalId`, GET /music/online) — тогда импортируем его.
       const musicId = await this.resolveMusicId(dto);
 
+      // Ремикс: снят «рядом» с чужим reel. Проверяем, что оригинал — существующий,
+      // опубликованный reel, который автор ремикса имеет право видеть.
+      const remixOfId = await this.resolveRemixOf(userId, dto);
+
       // Настройка «кто может отмечать меня»: отфильтровываем тех, кто запретил.
       const taggable = await this.filterTaggable(userId, dto.taggedUserIds);
 
@@ -194,6 +202,7 @@ export class PostsService {
           locationId: dto.locationId ?? null,
           musicId,
           isReel: dto.isReel ?? false,
+          remixOfId,
           status,
           scheduledAt,
           media: { create: mediaRows },
@@ -754,7 +763,7 @@ export class PostsService {
   }
 
   /** Просмотр считается ОДИН раз на пользователя (@@unique postId+userId). */
-  async view(userId: string, postId: number): Promise<ViewDto> {
+  async view(userId: string, postId: number, source?: string): Promise<ViewDto> {
     await this.loadVisiblePost(userId, postId);
 
     const existing = await this.prisma.postView.findUnique({
@@ -762,11 +771,61 @@ export class PostsService {
       select: { id: true },
     });
     if (!existing) {
-      await this.prisma.postView.create({ data: { postId, userId } });
+      // source пишется только при первом просмотре — для insights автора.
+      await this.prisma.postView.create({ data: { postId, userId, source: source ?? null } });
     }
 
     const viewsCount = await this.prisma.postView.count({ where: { postId } });
     return { viewsCount, counted: !existing };
+  }
+
+  /**
+   * Аналитика поста (Фаза 8) — только автору. Охват (уникальные зрители), реакции,
+   * engagement-rate, разбивка «подписчики vs нет» и топ-источники трафика.
+   */
+  async insights(userId: string, postId: number): Promise<PostInsightsDto> {
+    await this.assertOwner(userId, postId);
+
+    const [views, likes, comments, saves, shares, followers] = await Promise.all([
+      this.prisma.postView.findMany({ where: { postId }, select: { userId: true, source: true } }),
+      this.prisma.postLike.count({ where: { postId } }),
+      this.prisma.comment.count({ where: { postId } }),
+      this.prisma.favorite.count({ where: { postId } }),
+      this.prisma.share.count({ where: { postId } }),
+      this.prisma.follow.findMany({
+        where: { followingId: userId, status: FollowStatus.ACCEPTED },
+        select: { followerId: true },
+      }),
+    ]);
+
+    const reach = views.length;
+    const followerSet = new Set(followers.map((f) => f.followerId));
+    const fromFollowers = views.filter((v) => followerSet.has(v.userId)).length;
+
+    // Топ-источники: группируем по source (null → «unknown»), сортируем по убыванию.
+    const bySource = new Map<string, number>();
+    for (const v of views) {
+      const key = v.source ?? 'unknown';
+      bySource.set(key, (bySource.get(key) ?? 0) + 1);
+    }
+    const sources = [...bySource.entries()]
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const engagementRate =
+      reach > 0 ? Math.round(((likes + comments + saves + shares) / reach) * 1000) / 1000 : 0;
+
+    return {
+      reach,
+      likes,
+      comments,
+      saves,
+      shares,
+      engagementRate,
+      fromFollowers,
+      fromNonFollowers: reach - fromFollowers,
+      sources,
+    };
   }
 
   async toggleFavorite(
@@ -998,6 +1057,7 @@ export class PostsService {
       caption: row.caption,
       isReel: row.isReel,
       isArchived: row.isArchived,
+      remixOf: row.remixOf ? { id: row.remixOf.id, author: this.toBrief(row.remixOf.user) } : null,
       status: row.status,
       scheduledAt: row.scheduledAt,
       author: this.toBrief(row.user),
@@ -1026,6 +1086,96 @@ export class PostsService {
       commentsDisabled: row.commentsDisabled,
       createdAt: row.createdAt,
     };
+  }
+
+  /**
+   * Ремикс: оригинал должен существовать, быть опубликованным reel и быть доступен
+   * автору ремикса (чужой закрытый аккаунт/блок → нельзя ремиксить). Ремикс поста-фото
+   * запрещён — ремиксят только видео (как в IG).
+   */
+  private async resolveRemixOf(
+    userId: string,
+    dto: { remixOfId?: number },
+  ): Promise<number | null> {
+    if (!dto.remixOfId) return null;
+
+    const source = await this.prisma.post.findUnique({
+      where: { id: dto.remixOfId },
+      select: { userId: true, isReel: true, status: true },
+    });
+    if (!source || source.status !== PostStatus.PUBLISHED) {
+      throw new NotFoundException('Оригинальный reel не найден');
+    }
+    if (!source.isReel) {
+      throw new BadRequestException('Ремикс можно снять только с reel (видео)');
+    }
+    await this.access.assertCanViewContent(userId, source.userId);
+    return dto.remixOfId;
+  }
+
+  /** «Use this audio»: все reels, использующие данный трек (published, доступные зрителю). */
+  async byMusic(userId: string, musicId: number, dto: CursorDto): Promise<CursorPage<PostDto>> {
+    const music = await this.prisma.music.findUnique({
+      where: { id: musicId },
+      select: { id: true },
+    });
+    if (!music) throw new NotFoundException('Трек не найден');
+
+    const hidden = await this.access.blockedIds(userId);
+    const rows = await this.prisma.post.findMany({
+      where: {
+        musicId,
+        isReel: true,
+        isArchived: false,
+        status: PostStatus.PUBLISHED,
+        userId: { notIn: hidden },
+        // Закрытые аккаунты — только если я принятый подписчик (как в Explore).
+        OR: [
+          { user: { isPrivate: false } },
+          {
+            user: {
+              isPrivate: true,
+              followers: { some: { followerId: userId, status: FollowStatus.ACCEPTED } },
+            },
+          },
+        ],
+      },
+      select: POST_SELECT,
+      orderBy: { id: 'desc' },
+      take: dto.limit + 1,
+      ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
+    });
+    return this.toPage(userId, rows, dto.limit);
+  }
+
+  /** Ремиксы данного reel — reels, снятые «рядом» с ним. */
+  async remixes(userId: string, id: number, dto: CursorDto): Promise<CursorPage<PostDto>> {
+    // Оригинал должен быть виден зрителю — иначе и его ремиксы не показываем.
+    await this.loadVisiblePost(userId, id);
+
+    const hidden = await this.access.blockedIds(userId);
+    const rows = await this.prisma.post.findMany({
+      where: {
+        remixOfId: id,
+        isArchived: false,
+        status: PostStatus.PUBLISHED,
+        userId: { notIn: hidden },
+        OR: [
+          { user: { isPrivate: false } },
+          {
+            user: {
+              isPrivate: true,
+              followers: { some: { followerId: userId, status: FollowStatus.ACCEPTED } },
+            },
+          },
+        ],
+      },
+      select: POST_SELECT,
+      orderBy: { id: 'desc' },
+      take: dto.limit + 1,
+      ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
+    });
+    return this.toPage(userId, rows, dto.limit);
   }
 
   /** Наш `musicId` либо трек из каталога по `provider`+`externalId` (импортируем). */

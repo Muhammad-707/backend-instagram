@@ -7,6 +7,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
@@ -23,14 +24,19 @@ import {
 } from '@nestjs/swagger';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { CursorDto } from '../../common/pagination/cursor.dto';
 import { UploadedFile } from '../../storage/storage.types';
 import {
+  AddYoursFeedDto,
+  AddYoursPromptDto,
+  CreateAddYoursDto,
   CreateStoryDto,
   DeletedDto,
   MAX_STORY_FILES,
   ReactionDto,
   ReactionSentDto,
   StoryDto,
+  StoryInsightsDto,
   StoryLikeToggleDto,
   StoryRailItemDto,
   StoryReplyDto,
@@ -120,6 +126,20 @@ export class StoriesController {
     return this.storiesService.byUser(viewerId, targetId);
   }
 
+  @Get('add-yours/:promptId')
+  @ApiOperation({
+    summary: 'Лента цепочки «Add Yours» (промпт + истории-ответы)',
+    description: 'Кто ответил на промпт. Автор промпта — первым. Закрытые/блок/close-friends фильтруются.',
+  })
+  @ApiOkResponse({ type: AddYoursFeedDto })
+  async addYoursFeed(
+    @CurrentUser('id') userId: string,
+    @Param('promptId') promptId: string,
+    @Query() dto: CursorDto,
+  ): Promise<AddYoursFeedDto> {
+    return this.storiesService.addYoursFeed(userId, promptId, dto);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'История по id' })
   @ApiOkResponse({ type: StoryDto })
@@ -172,6 +192,32 @@ export class StoriesController {
     @Body() dto: StoryReplyDto,
   ): Promise<ReactionSentDto> {
     return this.storiesService.reply(userId, id, dto.text);
+  }
+
+  @Post(':id/add-yours')
+  @ApiOperation({
+    summary: 'Создать промпт «Add Yours» на своей истории («Добавь своё…»)',
+    description: 'Запускает цепочку-эстафету. Сама история становится первым звеном.',
+  })
+  @ApiCreatedResponse({ type: AddYoursPromptDto })
+  @ApiForbiddenResponse({ description: 'Это не ваша история' })
+  async createAddYours(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateAddYoursDto,
+  ): Promise<AddYoursPromptDto> {
+    return this.storiesService.createAddYoursPrompt(userId, id, dto);
+  }
+
+  @Get(':id/insights')
+  @ApiOperation({ summary: 'Аналитика истории (только автору): просмотры, лайки, реакции, ответы' })
+  @ApiOkResponse({ type: StoryInsightsDto })
+  @ApiForbiddenResponse({ description: 'Аналитика видна только автору' })
+  async insights(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<StoryInsightsDto> {
+    return this.storiesService.insights(userId, id);
   }
 
   @Get(':id/viewers')

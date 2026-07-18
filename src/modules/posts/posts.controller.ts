@@ -42,6 +42,7 @@ import {
   MAX_MEDIA,
   MyPostsQueryDto,
   PostDto,
+  PostInsightsDto,
   ReportPostDto,
   ShareDto,
   ShareResultDto,
@@ -49,6 +50,7 @@ import {
   UpdatePostDto,
   UpdatePostPrivacyDto,
   ViewDto,
+  ViewQueryDto,
 } from './dto/post.dto';
 import { PostsService } from './posts.service';
 
@@ -340,14 +342,46 @@ export class PostsController {
     return this.postsService.likes(userId, id, dto);
   }
 
+  @Get(':id/remixes')
+  @ApiOperation({
+    summary: 'Ремиксы этого reel (снятые «рядом» с ним)',
+    description: 'Reels других авторов, у которых remixOf = этот reel. Закрытые/блок исключены.',
+  })
+  @ApiOkResponse({ type: [PostDto] })
+  async remixes(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Query() dto: CursorDto,
+  ): Promise<CursorPage<PostDto>> {
+    return this.postsService.remixes(userId, id, dto);
+  }
+
   @Post(':id/view')
-  @ApiOperation({ summary: 'Просмотр (считается 1 раз на пользователя)' })
+  @ApiOperation({
+    summary: 'Просмотр (считается 1 раз на пользователя)',
+    description: 'source (feed/explore/profile/hashtag/reels) пишется при первом просмотре — для insights.',
+  })
   @ApiOkResponse({ type: ViewDto })
   async view(
     @CurrentUser('id') userId: string,
     @Param('id', ParseIntPipe) id: number,
+    @Query() dto: ViewQueryDto,
   ): Promise<ViewDto> {
-    return this.postsService.view(userId, id);
+    return this.postsService.view(userId, id, dto.source);
+  }
+
+  @Get(':id/insights')
+  @ApiOperation({
+    summary: 'Аналитика поста (только автору)',
+    description: 'Охват, лайки/комменты/сохранения/шеры, engagement-rate, подписчики vs нет, источники.',
+  })
+  @ApiOkResponse({ type: PostInsightsDto })
+  @ApiForbiddenResponse({ description: 'Это не ваша публикация' })
+  async insights(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<PostInsightsDto> {
+    return this.postsService.insights(userId, id);
   }
 
   @Post(':id/favorite')

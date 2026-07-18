@@ -25,6 +25,7 @@ import {
   OtherProfileDto,
   PostBriefDto,
   ProfileDto,
+  ProfileInsightsDto,
   UpdateProfileDto,
 } from './dto/profile.dto';
 
@@ -513,6 +514,63 @@ export class ProfileService {
       postsCount: row._count.posts,
       followersCount: row._count.followers,
       followingCount: row._count.following,
+    };
+  }
+
+  /**
+   * Аналитика аккаунта за период (Фаза 8) — только себе. Прирост подписчиков,
+   * просмотры профиля, опубликовано постов, охваченные/вовлечённые аккаунты.
+   */
+  async insights(userId: string, period?: string): Promise<ProfileInsightsDto> {
+    const days = period === '30d' ? 30 : period === '90d' ? 90 : 7;
+    const since = new Date(Date.now() - days * 86_400_000);
+
+    const [followersGained, profileViews, postsPublished, reachRows, ...engaged] =
+      await Promise.all([
+        this.prisma.follow.count({
+          where: { followingId: userId, status: FollowStatus.ACCEPTED, createdAt: { gte: since } },
+        }),
+        this.prisma.profileView.count({
+          where: { profileUserId: userId, viewedAt: { gte: since } },
+        }),
+        this.prisma.post.count({
+          where: { userId, status: PostStatus.PUBLISHED, createdAt: { gte: since } },
+        }),
+        this.prisma.postView.findMany({
+          where: { post: { userId }, viewedAt: { gte: since } },
+          select: { userId: true },
+          distinct: ['userId'],
+        }),
+        // Вовлечённые = уникальные авторы лайков/комментов/сохранений/шеров моих постов.
+        this.prisma.postLike.findMany({
+          where: { post: { userId }, createdAt: { gte: since } },
+          select: { userId: true },
+        }),
+        this.prisma.comment.findMany({
+          where: { post: { userId }, createdAt: { gte: since } },
+          select: { userId: true },
+        }),
+        this.prisma.favorite.findMany({
+          where: { post: { userId }, createdAt: { gte: since } },
+          select: { userId: true },
+        }),
+        this.prisma.share.findMany({
+          where: { post: { userId }, createdAt: { gte: since } },
+          select: { userId: true },
+        }),
+      ]);
+
+    const engagedSet = new Set<string>();
+    for (const rows of engaged) for (const r of rows) engagedSet.add(r.userId);
+
+    return {
+      period: `${days}d`,
+      days,
+      followersGained,
+      profileViews,
+      postsPublished,
+      accountsReached: reachRows.length,
+      accountsEngaged: engagedSet.size,
     };
   }
 

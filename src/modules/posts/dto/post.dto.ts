@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -83,6 +84,15 @@ export class CreatePostDto {
   @Transform(toBool)
   @IsBoolean()
   isReel?: boolean;
+
+  @ApiPropertyOptional({
+    example: 42,
+    description: 'id оригинального reel, если это ремикс («Remix of @author»). Только для isReel=true.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  remixOfId?: number;
 
   @ApiPropertyOptional({
     enum: [PostStatus.DRAFT, PostStatus.SCHEDULED],
@@ -211,6 +221,15 @@ export class PostLocationDto {
   country!: string;
 }
 
+/** Краткая ссылка на оригинальный reel, с которого снят ремикс. */
+export class RemixRefDto {
+  @ApiProperty({ example: 42 })
+  id!: number;
+
+  @ApiProperty({ type: UserBriefDto, description: 'Автор оригинального reel' })
+  author!: UserBriefDto;
+}
+
 export class PostDto {
   @ApiProperty({ example: 12 })
   id!: number;
@@ -223,6 +242,13 @@ export class PostDto {
 
   @ApiProperty({ example: false })
   isArchived!: boolean;
+
+  @ApiPropertyOptional({
+    type: RemixRefDto,
+    nullable: true,
+    description: 'Оригинальный reel, если это ремикс. Фронт рисует «Remix of @author».',
+  })
+  remixOf?: RemixRefDto | null;
 
   @ApiPropertyOptional({ enum: PostStatus, description: 'DRAFT/SCHEDULED/PUBLISHED' })
   status?: PostStatus;
@@ -355,4 +381,56 @@ export class TagActionDto {
     description: 'Итог: ACCEPTED → пост в «Фото с вами», DECLINED → скрыт',
   })
   status!: TagStatus;
+}
+
+// ─────────────── insights (Фаза 8) ───────────────
+
+/** Откуда пришёл просмотр — источник трафика для аналитики. */
+export const VIEW_SOURCES = ['feed', 'explore', 'profile', 'hashtag', 'reels', 'direct'] as const;
+
+export class ViewQueryDto {
+  @ApiPropertyOptional({
+    enum: VIEW_SOURCES,
+    description: 'Источник просмотра (для insights автора). По умолчанию не пишется.',
+  })
+  @IsOptional()
+  @IsIn(VIEW_SOURCES as unknown as string[])
+  source?: string;
+}
+
+export class SourceBreakdownDto {
+  @ApiProperty({ example: 'explore' })
+  source!: string;
+
+  @ApiProperty({ example: 128 })
+  count!: number;
+}
+
+export class PostInsightsDto {
+  @ApiProperty({ example: 340, description: 'Охват — сколько уникальных аккаунтов посмотрело' })
+  reach!: number;
+
+  @ApiProperty({ example: 52 })
+  likes!: number;
+
+  @ApiProperty({ example: 8 })
+  comments!: number;
+
+  @ApiProperty({ example: 12, description: 'Сохранения' })
+  saves!: number;
+
+  @ApiProperty({ example: 5 })
+  shares!: number;
+
+  @ApiProperty({ example: 0.226, description: '(likes+comments+saves+shares)/reach' })
+  engagementRate!: number;
+
+  @ApiProperty({ example: 210, description: 'Просмотры от подписчиков автора' })
+  fromFollowers!: number;
+
+  @ApiProperty({ example: 130, description: 'Просмотры не от подписчиков' })
+  fromNonFollowers!: number;
+
+  @ApiProperty({ type: [SourceBreakdownDto], description: 'Топ-источники трафика' })
+  sources!: SourceBreakdownDto[];
 }

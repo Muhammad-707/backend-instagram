@@ -8,6 +8,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
 } from 'class-validator';
 import { IsEmoji } from '../../../common/validators/is-emoji.decorator';
@@ -86,6 +87,28 @@ export class CreateStoryDto {
   @Type(() => Number)
   @IsInt()
   fromPostId?: number;
+
+  @ApiPropertyOptional({
+    description: 'id промпта «Add Yours» — эта история отвечает в цепочку-эстафету',
+    example: 'b3f1c2e4-...',
+  })
+  @IsOptional()
+  @IsUUID()
+  addYoursPromptId?: string;
+}
+
+/** Создать промпт «Add Yours» на своей истории — приглашение «Добавь своё…». */
+export class CreateAddYoursDto {
+  @ApiProperty({ example: 'Покажи свой завтрак 🍳', maxLength: 80 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(80)
+  text!: string;
+
+  @ApiPropertyOptional({ example: '🍳', description: 'Необязательный эмодзи стикера' })
+  @IsOptional()
+  @IsEmoji()
+  emoji?: string;
 }
 
 export class ReactionDto {
@@ -155,6 +178,13 @@ export class StoryDto {
     description: 'id поста, если история — репост',
   })
   fromPostId?: number | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description: 'id промпта «Add Yours», если история — часть цепочки',
+  })
+  addYoursPromptId?: string | null;
 
   @ApiProperty({ example: false, description: 'Смотрел ли Я — считается на СЕРВЕРЕ' })
   isViewed!: boolean;
@@ -237,4 +267,61 @@ export class ReactionSentDto {
 export class DeletedDto {
   @ApiProperty({ example: true })
   deleted!: boolean;
+}
+
+/** Аналитика истории (Фаза 8) — только автору. */
+export class StoryInsightsDto {
+  @ApiProperty({ example: 210, description: 'Просмотры (уникальные зрители)' })
+  views!: number;
+
+  @ApiProperty({ example: 18 })
+  likes!: number;
+
+  @ApiProperty({ example: 7, description: 'Эмодзи-реакции' })
+  reactions!: number;
+
+  @ApiProperty({ example: 4, description: 'Ответы на историю' })
+  replies!: number;
+
+  @ApiProperty({ example: 0.138, description: '(likes+reactions+replies)/views' })
+  engagementRate!: number;
+}
+
+/** Промпт «Add Yours» — шапка цепочки. */
+export class AddYoursPromptDto {
+  @ApiProperty({ example: 'b3f1c2e4-...' })
+  id!: string;
+
+  @ApiProperty({ example: 'Покажи свой завтрак 🍳' })
+  text!: string;
+
+  @ApiPropertyOptional({ type: String, nullable: true, example: '🍳' })
+  emoji?: string | null;
+
+  @ApiProperty({ type: UserBriefDto, description: 'Кто запустил цепочку' })
+  creator!: UserBriefDto;
+
+  @ApiProperty({ example: 42, description: 'id истории, где создан промпт' })
+  originStoryId!: number;
+
+  @ApiProperty({ example: 7, description: 'Сколько историй уже ответило' })
+  responsesCount!: number;
+
+  @ApiProperty()
+  createdAt!: Date;
+}
+
+/** Лента ответивших на промпт «Add Yours»: шапка + страница историй-ответов. */
+export class AddYoursFeedDto {
+  @ApiProperty({ type: AddYoursPromptDto })
+  prompt!: AddYoursPromptDto;
+
+  @ApiProperty({ type: [StoryDto], description: 'Истории-ответы (автор промпта — первым)' })
+  items!: StoryDto[];
+
+  @ApiPropertyOptional({ type: String, nullable: true })
+  nextCursor!: string | null;
+
+  @ApiProperty({ example: false })
+  hasMore!: boolean;
 }

@@ -36,6 +36,8 @@ import {
   OtherProfileDto,
   PostBriefDto,
   ProfileDto,
+  ProfileInsightsDto,
+  ProfileInsightsQueryDto,
   UpdatePrivacyDto,
   UpdateProfileDto,
 } from './dto/profile.dto';
@@ -110,6 +112,19 @@ export class ProfileController {
     @Query() dto: ActivityQueryDto,
   ): Promise<ActivityItemDto[]> {
     return this.profileService.activity(userId, dto);
+  }
+
+  @Get('me/insights')
+  @ApiOperation({
+    summary: 'Аналитика аккаунта за период (только себе)',
+    description: 'period=7d|30d|90d. Прирост подписчиков, просмотры профиля, охват, вовлечённость.',
+  })
+  @ApiOkResponse({ type: ProfileInsightsDto })
+  async insights(
+    @CurrentUser('id') userId: string,
+    @Query() dto: ProfileInsightsQueryDto,
+  ): Promise<ProfileInsightsDto> {
+    return this.profileService.insights(userId, dto.period);
   }
 
   @Put()

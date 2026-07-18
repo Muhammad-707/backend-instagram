@@ -208,6 +208,7 @@ export class HighlightsService {
         closeFriendsOnly: true,
         saveToArchive: true,
         fromPostId: true,
+        addYoursPromptId: true,
         createdAt: true,
         expiresAt: true,
         music: {
@@ -246,6 +247,7 @@ export type HighlightStoryRow = Prisma.StoryGetPayload<{
     closeFriendsOnly: true;
     saveToArchive: true;
     fromPostId: true;
+    addYoursPromptId: true;
     createdAt: true;
     expiresAt: true;
     music: {

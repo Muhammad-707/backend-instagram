@@ -1,10 +1,12 @@
 import {
   Controller,
   Delete,
+  forwardRef,
   Get,
   Header,
   Headers,
   HttpStatus,
+  Inject,
   Param,
   ParseIntPipe,
   Post,
@@ -23,7 +25,9 @@ import {
 import { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
-import { CursorPage } from '../../common/pagination/cursor.dto';
+import { CursorDto, CursorPage } from '../../common/pagination/cursor.dto';
+import { PostDto } from '../posts/dto/post.dto';
+import { PostsService } from '../posts/posts.service';
 import { MusicDto, SaveMusicDto, SearchMusicDto } from './dto/music.dto';
 import { MusicService } from './music.service';
 
@@ -31,7 +35,13 @@ import { MusicService } from './music.service';
 @ApiTags('music')
 @Controller('music')
 export class MusicController {
-  constructor(private readonly musicService: MusicService) {}
+  constructor(
+    private readonly musicService: MusicService,
+    // «Use this audio» отдаёт reels — а это забота PostsService. Модули ссылаются
+    // друг на друга (Posts тянет музыку, Music тянет reels), поэтому forwardRef.
+    @Inject(forwardRef(() => PostsService))
+    private readonly postsService: PostsService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Поиск музыки (по title И artist, курсорная пагинация)' })
@@ -97,6 +107,21 @@ export class MusicController {
 
     // Пишем поток напрямую в ответ: файл в память не поднимаем.
     chunk.stream.pipe(res);
+  }
+
+  /** ':id/reels' — ДО ':id', иначе параметр перехватит путь. */
+  @Get(':id/reels')
+  @ApiOperation({
+    summary: '«Use this audio» — все reels с этим треком',
+    description: 'Reels (видео-посты), использующие данный трек. Закрытые аккаунты и блок исключены.',
+  })
+  @ApiOkResponse({ type: [PostDto] })
+  async reels(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Query() dto: CursorDto,
+  ): Promise<CursorPage<PostDto>> {
+    return this.postsService.byMusic(userId, id, dto);
   }
 
   @Get(':id')

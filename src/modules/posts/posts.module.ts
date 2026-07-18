@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MusicModule } from '../music/music.module';
 import { SettingsModule } from '../settings/settings.module';
 import { CommentsService } from './comments.service';
@@ -12,7 +12,9 @@ import { PostsService } from './posts.service';
   // Трек в посте: OnlineMusicService импортирует найденный в каталоге трек,
   // AttachedMusicService строит честный ответ (streamUrl только если файл наш).
   // SettingsModule — политики «кто может отмечать/упоминать/комментировать».
-  imports: [MusicModule, SettingsModule],
+  // MusicModule через forwardRef: Music ссылается обратно на PostsService
+  // ради «Use this audio» (GET /music/:id/reels).
+  imports: [forwardRef(() => MusicModule), SettingsModule],
   controllers: [PostsController],
   providers: [
     PostsService,
