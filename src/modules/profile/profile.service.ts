@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { FollowStatus, NotifType, PostStatus, Prisma, TagStatus } from '@prisma/client';
+import { FollowStatus, NotifType, PostStatus, Prisma, RequestStatus, TagStatus } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
 import { buildCursorPage, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -254,7 +254,16 @@ export class ProfileService {
     await this.access.assertCanViewContent(viewerId, targetId);
     return this.pagePosts(
       viewerId,
-      { userId: targetId, isReel, isArchived: false, status: PostStatus.PUBLISHED },
+      {
+        isReel,
+        isArchived: false,
+        status: PostStatus.PUBLISHED,
+        // Свои посты + совместные (принятое соавторство) — как в IG, у обоих в профиле.
+        OR: [
+          { userId: targetId },
+          { collaborators: { some: { userId: targetId, status: RequestStatus.ACCEPTED } } },
+        ],
+      },
       dto,
       [{ pinnedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
     );

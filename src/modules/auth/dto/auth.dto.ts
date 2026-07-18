@@ -136,3 +136,35 @@ export class CheckUsernameDto {
   @MaxLength(30)
   userName!: string;
 }
+
+// ─────────────── 2FA / сессии (Фаза 9) ───────────────
+
+const CODE_RE = /^[0-9]{6}$/;
+
+export class Enable2faDto {
+  @ApiProperty({ example: '123456', description: '6-значный код из приложения-аутентификатора' })
+  @IsString()
+  @Matches(CODE_RE, { message: 'Код — 6 цифр' })
+  code!: string;
+}
+
+export class Disable2faDto extends Enable2faDto {}
+
+export class Verify2faDto {
+  @ApiProperty({ description: 'Тикет, выданный при логине (twoFactorRequired)' })
+  @IsString()
+  @IsNotEmpty()
+  ticket!: string;
+
+  @ApiProperty({ example: '123456', description: 'Код из приложения ИЛИ резервный код (ab12-cd34)' })
+  @IsString()
+  @IsNotEmpty()
+  code!: string;
+}
+
+export class LogoutAllDto {
+  @ApiProperty({ description: 'Текущий refresh-токен — эта сессия НЕ будет отозвана' })
+  @IsString()
+  @IsNotEmpty()
+  refreshToken!: string;
+}

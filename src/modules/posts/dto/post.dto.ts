@@ -129,6 +129,19 @@ export class UpdatePostDto {
   caption!: string;
 }
 
+export class InviteCollaboratorsDto {
+  @ApiProperty({ type: [String], description: 'id соавторов (приглашение, статус PENDING)' })
+  @Transform(toStringArray)
+  @IsArray()
+  @IsUUID('4', { each: true })
+  userIds!: string[];
+}
+
+export class CollaboratorActionDto {
+  @ApiProperty({ enum: ['ACCEPTED', 'DECLINED'], example: 'ACCEPTED' })
+  status!: string;
+}
+
 export class ShareDto {
   @ApiPropertyOptional({ description: 'Кому отправить в чат (id пользователя)' })
   @IsOptional()
@@ -274,6 +287,12 @@ export class PostDto {
 
   @ApiProperty({ type: [UserBriefDto], description: 'Отмеченные на фото' })
   taggedUsers!: UserBriefDto[];
+
+  @ApiProperty({
+    type: [UserBriefDto],
+    description: 'Соавторы (принявшие приглашение) — пост в профиле у каждого',
+  })
+  collaborators!: UserBriefDto[];
 
   @ApiProperty({ type: [String], example: ['travel', 'sunset'] })
   hashtags!: string[];

@@ -198,6 +198,10 @@ model User {
   isVerified    Boolean   @default(false)
   isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
+  // 2FA (TOTP): секрет живёт с момента setup; включается только после подтверждения кодом.
+  totpSecret    String? // base32; null → 2FA не настраивалась
+  totpEnabled   Boolean   @default(false)
+  backupCodes   String[]  @default([]) // sha256-хэши неиспользованных резервных кодов
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -215,18 +219,19 @@ model User {
   closeFriends   CloseFriend[] @relation("CloseFriendOwner")
   closeFriendOf  CloseFriend[] @relation("CloseFriendTarget")
 
-  posts          Post[]
-  postLikes      PostLike[]
-  postViews      PostView[]
-  favorites      Favorite[]
-  collections    Collection[]
-  comments       Comment[]
-  commentLikes   CommentLike[]
-  mentions       Mention[]
-  postTags       PostTag[]
-  sharesMade     Share[]       @relation("ShareAuthor")
-  sharesReceived Share[]       @relation("ShareRecipient")
-  savedMusic     SavedMusic[]
+  posts              Post[]
+  postCollaborations PostCollaborator[]
+  postLikes          PostLike[]
+  postViews          PostView[]
+  favorites          Favorite[]
+  collections        Collection[]
+  comments           Comment[]
+  commentLikes       CommentLike[]
+  mentions           Mention[]
+  postTags           PostTag[]
+  sharesMade         Share[]            @relation("ShareAuthor")
+  sharesReceived     Share[]            @relation("ShareRecipient")
+  savedMusic         SavedMusic[]
 
   stories          Story[]
   storyViews       StoryView[]
@@ -436,17 +441,18 @@ model Post {
   remixOf  Post?     @relation("PostRemix", fields: [remixOfId], references: [id], onDelete: SetNull)
   remixes  Post[]    @relation("PostRemix")
 
-  media       PostMedia[]
-  likes       PostLike[]
-  comments    Comment[]
-  views       PostView[]
-  favorites   Favorite[]
-  shares      Share[]
-  taggedUsers PostTag[]
-  hashtags    PostHashtag[]
-  mentions    Mention[]
-  stories     Story[]       @relation("StoryFromPost")
-  messages    Message[]     @relation("SharedPost")
+  media         PostMedia[]
+  collaborators PostCollaborator[]
+  likes         PostLike[]
+  comments      Comment[]
+  views         PostView[]
+  favorites     Favorite[]
+  shares        Share[]
+  taggedUsers   PostTag[]
+  hashtags      PostHashtag[]
+  mentions      Mention[]
+  stories       Story[]            @relation("StoryFromPost")
+  messages      Message[]          @relation("SharedPost")
 
   @@index([userId, createdAt])
   @@index([createdAt])
@@ -456,6 +462,21 @@ model Post {
   @@index([userId, pinnedAt])
   @@index([userId, isArchived, status, createdAt])
   @@index([remixOfId])
+}
+
+// Совместный пост (Collab): соавтор видит пост в своём профиле, авторство общее.
+model PostCollaborator {
+  id        String        @id @default(uuid())
+  postId    Int
+  userId    String
+  status    RequestStatus @default(PENDING)
+  createdAt DateTime      @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([userId, status])
 }
 
 model PostMedia {

@@ -1,4 +1,17 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Headers,
+  HttpCode,
+  HttpStatus,
+  Ip,
+  Param,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
@@ -15,22 +28,32 @@ import { Public } from '../../common/decorators/public.decorator';
 import { AuthService } from './auth.service';
 import {
   AuthUserDto,
+  BackupCodesDto,
+  LogoutAllResultDto,
   MessageDto,
   ResetTokenDto,
+  SessionDto,
   TokensDto,
+  TwoFactorRequiredDto,
+  TwoFactorSetupDto,
   UsernameAvailableDto,
 } from './dto/auth-response.dto';
 import {
   ChangePasswordDto,
   CheckUsernameDto,
+  Disable2faDto,
+  Enable2faDto,
   ForgotPasswordDto,
   LoginDto,
+  LogoutAllDto,
   RefreshDto,
   RegisterDto,
   ResendCodeDto,
   ResetPasswordDto,
+  Verify2faDto,
   VerifyCodeDto,
 } from './dto/auth.dto';
+import { DeviceInfo } from './auth.service';
 
 /** ТЗ §7: login/register/forgot — 5/мин (глобально стоит 100/мин). */
 const AUTH_THROTTLE = { default: { limit: 5, ttl: 60_000 } };
@@ -54,20 +77,33 @@ export class AuthController {
   @ApiCreatedResponse({ type: TokensDto })
   @ApiConflictResponse({ description: 'userName / email / phone уже заняты' })
   @ApiTooManyRequestsResponse({ description: 'Больше 5 запросов в минуту' })
-  async register(@Body() dto: RegisterDto): Promise<TokensDto> {
-    return this.authService.register(dto);
+  async register(
+    @Body() dto: RegisterDto,
+    @Ip() ip: string,
+    @Headers('user-agent') ua?: string,
+  ): Promise<TokensDto> {
+    return this.authService.register(dto, device(ip, ua));
   }
 
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle(AUTH_THROTTLE)
-  @ApiOperation({ summary: 'Вход по userName ИЛИ email ИЛИ phone' })
+  @ApiOperation({
+    summary: 'Вход по userName ИЛИ email ИЛИ phone',
+    description:
+      'Если у аккаунта включена 2FA — вместо токенов вернётся { twoFactorRequired: true, ticket }; ' +
+      'второй шаг — POST /auth/2fa/verify с тикетом и кодом.',
+  })
   @ApiOkResponse({ type: TokensDto })
   @ApiUnauthorizedResponse({ description: 'Неверный логин или пароль (401, не 500)' })
   @ApiTooManyRequestsResponse({ description: 'Больше 5 запросов в минуту' })
-  async login(@Body() dto: LoginDto): Promise<TokensDto> {
-    return this.authService.login(dto);
+  async login(
+    @Body() dto: LoginDto,
+    @Ip() ip: string,
+    @Headers('user-agent') ua?: string,
+  ): Promise<TokensDto | TwoFactorRequiredDto> {
+    return this.authService.login(dto, device(ip, ua));
   }
 
   @Public()
@@ -163,6 +199,102 @@ export class AuthController {
     return this.authService.checkUsername(dto.userName);
   }
 
+  // ─────────────────────────── 2FA ───────────────────────────
+
+  @Post('2fa/setup')
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Начать настройку 2FA — вернуть секрет и otpauth-URI для QR',
+    description: 'Ещё НЕ включает 2FA: сначала подтвердите кодом через /2fa/enable.',
+  })
+  @ApiOkResponse({ type: TwoFactorSetupDto })
+  async setup2fa(@CurrentUser('id') userId: string): Promise<TwoFactorSetupDto> {
+    return this.authService.setup2fa(userId);
+  }
+
+  @Post('2fa/enable')
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Подтвердить код → включить 2FA и получить резервные коды',
+    description: 'Резервные коды показываются ОДИН раз — сохраните их.',
+  })
+  @ApiOkResponse({ type: BackupCodesDto })
+  @ApiUnauthorizedResponse({ description: 'Неверный код' })
+  async enable2fa(
+    @CurrentUser('id') userId: string,
+    @Body() dto: Enable2faDto,
+  ): Promise<BackupCodesDto> {
+    return this.authService.enable2fa(userId, dto);
+  }
+
+  @Post('2fa/disable')
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Отключить 2FA (нужен действующий код или резервный)' })
+  @ApiOkResponse({ type: MessageDto })
+  @ApiUnauthorizedResponse({ description: 'Неверный код' })
+  async disable2fa(
+    @CurrentUser('id') userId: string,
+    @Body() dto: Disable2faDto,
+  ): Promise<MessageDto> {
+    return this.authService.disable2fa(userId, dto);
+  }
+
+  @Public()
+  @Post('2fa/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Второй шаг логина: тикет + код → пара токенов' })
+  @ApiOkResponse({ type: TokensDto })
+  @ApiUnauthorizedResponse({ description: 'Тикет/код неверен или истёк' })
+  async verify2fa(
+    @Body() dto: Verify2faDto,
+    @Ip() ip: string,
+    @Headers('user-agent') ua?: string,
+  ): Promise<TokensDto> {
+    return this.authService.verify2fa(dto, device(ip, ua));
+  }
+
+  // ─────────────────────────── сессии ───────────────────────────
+
+  @Get('sessions')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Активные сессии (устройства)',
+    description: 'Передайте текущий refresh-токен в ?rt=…, чтобы пометить свою сессию (current).',
+  })
+  @ApiOkResponse({ type: [SessionDto] })
+  async sessions(
+    @CurrentUser('id') userId: string,
+    @Query('rt') rt?: string,
+  ): Promise<SessionDto[]> {
+    return this.authService.listSessions(userId, rt);
+  }
+
+  @Delete('sessions/:id')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Завершить конкретную сессию (её refresh перестаёт работать)' })
+  @ApiOkResponse({ type: MessageDto })
+  async revokeSession(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ): Promise<MessageDto> {
+    return this.authService.revokeSession(userId, id);
+  }
+
+  @Post('sessions/logout-all')
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Выйти со всех устройств, кроме текущего' })
+  @ApiOkResponse({ type: LogoutAllResultDto })
+  async logoutAll(
+    @CurrentUser('id') userId: string,
+    @Body() dto: LogoutAllDto,
+  ): Promise<LogoutAllResultDto> {
+    return this.authService.logoutAllExceptCurrent(userId, dto.refreshToken);
+  }
+
   @Get('me')
   @ApiBearerAuth()
   @ApiOperation({
@@ -179,4 +311,9 @@ export class AuthController {
   async me(@CurrentUser() user: JwtUser): Promise<AuthUserDto> {
     return this.authService.me(user);
   }
+}
+
+/** Собирает DeviceInfo из запроса — userAgent обрезаем, чтобы не раздувать БД. */
+function device(ip?: string, ua?: string): DeviceInfo {
+  return { ip: ip || undefined, userAgent: ua ? ua.slice(0, 255) : undefined };
 }

@@ -33,8 +33,10 @@ import { CommentsService } from './comments.service';
 import { CommentDto, CommentLikeToggleDto, CreateCommentDto, DeletedDto } from './dto/comment.dto';
 import {
   ArchiveDto,
+  CollaboratorActionDto,
   CreatePostDto,
   DraftsQueryDto,
+  InviteCollaboratorsDto,
   ExploreQueryDto,
   FavoriteToggleDto,
   FeedDto,
@@ -227,6 +229,19 @@ export class PostsController {
     return this.postsService.pendingTags(userId, dto);
   }
 
+  @Get('collabs/pending')
+  @ApiOperation({
+    summary: 'Мои приглашения в соавторы (ожидают ответа)',
+    description: 'Посты, куда меня позвали соавтором и я ещё не принял/отклонил.',
+  })
+  @ApiOkResponse({ type: [PostDto] })
+  async pendingCollabs(
+    @CurrentUser('id') userId: string,
+    @Query() dto: CursorDto,
+  ): Promise<CursorPage<PostDto>> {
+    return this.postsService.pendingCollabs(userId, dto);
+  }
+
   // ─────────── один пост ───────────
 
   @Get(':id')
@@ -405,6 +420,41 @@ export class PostsController {
     @Body() dto: ShareDto,
   ): Promise<ShareResultDto> {
     return this.postsService.share(userId, id, dto);
+  }
+
+  @Post(':id/collaborators')
+  @ApiOperation({
+    summary: 'Пригласить соавторов (только автор)',
+    description: 'Соавторы получают PENDING-приглашение; приняв, видят пост в своём профиле.',
+  })
+  @ApiCreatedResponse({ type: PostDto })
+  @ApiForbiddenResponse({ description: 'Это не ваша публикация' })
+  async inviteCollaborators(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: InviteCollaboratorsDto,
+  ): Promise<PostDto> {
+    return this.postsService.inviteCollaborators(userId, id, dto.userIds);
+  }
+
+  @Post(':id/collaborators/accept')
+  @ApiOperation({ summary: 'Принять приглашение в соавторы' })
+  @ApiOkResponse({ type: CollaboratorActionDto })
+  async acceptCollab(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<CollaboratorActionDto> {
+    return this.postsService.respondCollaborator(userId, id, true);
+  }
+
+  @Post(':id/collaborators/decline')
+  @ApiOperation({ summary: 'Отклонить приглашение в соавторы' })
+  @ApiOkResponse({ type: CollaboratorActionDto })
+  async declineCollab(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<CollaboratorActionDto> {
+    return this.postsService.respondCollaborator(userId, id, false);
   }
 
   @Post(':id/report')

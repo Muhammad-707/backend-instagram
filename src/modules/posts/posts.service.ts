@@ -13,6 +13,7 @@ import {
   PostStatus,
   Prisma,
   ReportTargetType,
+  RequestStatus,
   TagStatus,
 } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -41,6 +42,7 @@ import { ExploreRankingService } from './explore-ranking.service';
 import { FeedRankingService, RankedCandidate } from './feed-ranking.service';
 import {
   ArchiveDto,
+  CollaboratorActionDto,
   CreatePostDto,
   ExploreQueryDto,
   FavoriteToggleDto,
@@ -101,6 +103,11 @@ const POST_SELECT = {
   // человека, пока он сам не согласился (как ревью отметок в Instagram).
   taggedUsers: {
     where: { status: TagStatus.ACCEPTED },
+    select: { user: { select: USER_BRIEF } },
+  },
+  // Соавторы (Collab) — только принявшие приглашение видны в шапке поста.
+  collaborators: {
+    where: { status: RequestStatus.ACCEPTED },
     select: { user: { select: USER_BRIEF } },
   },
   hashtags: { select: { hashtag: { select: { name: true } } } },
@@ -604,8 +611,73 @@ export class PostsService {
 
   async my(userId: string, dto: CursorDto, archived = false): Promise<CursorPage<PostDto>> {
     const rows = await this.prisma.post.findMany({
-      // Только опубликованные — черновики/запланированные живут в GET /posts/drafts.
-      where: { userId, isArchived: archived, status: PostStatus.PUBLISHED },
+      // Мои посты + совместные (где я принятый соавтор). Черновики/запланированные — в /drafts.
+      where: {
+        isArchived: archived,
+        status: PostStatus.PUBLISHED,
+        OR: [
+          { userId },
+          { collaborators: { some: { userId, status: RequestStatus.ACCEPTED } } },
+        ],
+      },
+      select: POST_SELECT,
+      orderBy: { id: 'desc' },
+      take: dto.limit + 1,
+      ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
+    });
+    return this.toPage(userId, rows, dto.limit);
+  }
+
+  // ─────────────────────── совместные посты (Collab) ───────────────────────
+
+  /** Автор приглашает соавторов (статус PENDING). Себя приглашать нельзя. */
+  async inviteCollaborators(
+    userId: string,
+    postId: number,
+    userIds: string[],
+  ): Promise<PostDto> {
+    await this.assertOwner(userId, postId);
+
+    const targets = [...new Set(userIds)].filter((id) => id !== userId);
+    for (const collaboratorId of targets) {
+      // Приглашать можно только тех, кого не заблокировали (в обе стороны).
+      await this.access.assertNotBlocked(userId, collaboratorId);
+      await this.prisma.postCollaborator.upsert({
+        where: { postId_userId: { postId, userId: collaboratorId } },
+        create: { postId, userId: collaboratorId, status: RequestStatus.PENDING },
+        // Повторное приглашение после отказа снова делает его PENDING.
+        update: { status: RequestStatus.PENDING },
+      });
+      this.notify(collaboratorId, userId, NotifType.TAG_POST, { postId });
+    }
+    return this.byId(userId, postId);
+  }
+
+  /** Приглашённый принимает/отклоняет соавторство. */
+  async respondCollaborator(
+    userId: string,
+    postId: number,
+    accept: boolean,
+  ): Promise<CollaboratorActionDto> {
+    const invite = await this.prisma.postCollaborator.findUnique({
+      where: { postId_userId: { postId, userId } },
+      select: { id: true },
+    });
+    if (!invite) throw new NotFoundException('Приглашения в соавторы нет');
+
+    const status = accept ? RequestStatus.ACCEPTED : RequestStatus.DECLINED;
+    await this.prisma.postCollaborator.update({ where: { id: invite.id }, data: { status } });
+    return { status };
+  }
+
+  /** Мои приглашения в соавторы (ожидают ответа). */
+  async pendingCollabs(userId: string, dto: CursorDto): Promise<CursorPage<PostDto>> {
+    const rows = await this.prisma.post.findMany({
+      where: {
+        isArchived: false,
+        status: PostStatus.PUBLISHED,
+        collaborators: { some: { userId, status: RequestStatus.PENDING } },
+      },
       select: POST_SELECT,
       orderBy: { id: 'desc' },
       take: dto.limit + 1,
@@ -1074,6 +1146,7 @@ export class PostsService {
       location: row.location,
       music: this.attachedMusic.toDto(row.music),
       taggedUsers: row.taggedUsers.map((t) => this.toBrief(t.user)),
+      collaborators: row.collaborators.map((c) => this.toBrief(c.user)),
       hashtags: row.hashtags.map((h) => h.hashtag.name),
       likesCount: showLikes ? row._count.likes : null,
       commentsCount: row._count.comments,

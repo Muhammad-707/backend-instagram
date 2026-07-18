@@ -52,4 +52,19 @@ export class MailService implements OnModuleInit {
     });
     this.logger.log(`Код сброса отправлен на ${to}`);
   }
+
+  /** Уведомление о входе с нового устройства. */
+  async sendLoginAlert(to: string, userName: string, userAgent: string, ip: string): Promise<void> {
+    const when = new Date().toLocaleString('ru-RU');
+    await this.transporter.sendMail({
+      from: this.from,
+      to,
+      subject: 'Новый вход в ваш аккаунт Instagram',
+      text:
+        `Здравствуйте, ${userName}! Мы заметили вход в ваш аккаунт с нового устройства.\n` +
+        `Время: ${when}\nУстройство: ${userAgent}\nIP: ${ip}\n\n` +
+        `Если это были вы — всё в порядке. Если нет — смените пароль и завершите чужие сессии в настройках.`,
+    });
+    this.logger.log(`Алёрт о входе отправлен на ${to}`);
+  }
 }

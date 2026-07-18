@@ -4,6 +4,7 @@ import {
   ConflictException,
   Injectable,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -16,19 +17,45 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import {
   AuthUserDto,
+  BackupCodesDto,
+  LogoutAllResultDto,
   MessageDto,
   ResetTokenDto,
+  SessionDto,
   TokensDto,
+  TwoFactorRequiredDto,
+  TwoFactorSetupDto,
   UsernameAvailableDto,
 } from './dto/auth-response.dto';
 import {
   ChangePasswordDto,
+  Enable2faDto,
   ForgotPasswordDto,
   LoginDto,
   RegisterDto,
   ResetPasswordDto,
+  Verify2faDto,
   VerifyCodeDto,
 } from './dto/auth.dto';
+import {
+  generateBackupCodes,
+  generateTotpSecret,
+  hashBackupCode,
+  otpauthUri,
+  verifyTotp,
+} from './totp.util';
+
+/** Инфо об устройстве для сессий и алёрта о новом входе. */
+export interface DeviceInfo {
+  userAgent?: string;
+  ip?: string;
+}
+
+interface TicketPayload {
+  sub: string;
+  jti: string;
+  typ: '2fa';
+}
 
 /** ТЗ §7: bcrypt 12 rounds. */
 const BCRYPT_ROUNDS = 12;
@@ -80,7 +107,7 @@ export class AuthService {
 
   // ─────────────────────────── register / login ───────────────────────────
 
-  async register(dto: RegisterDto): Promise<TokensDto> {
+  async register(dto: RegisterDto, device?: DeviceInfo): Promise<TokensDto> {
     if (dto.password !== dto.confirmPassword) {
       throw new BadRequestException('Пароли не совпадают');
     }
@@ -109,17 +136,17 @@ export class AuthService {
       select: USER_SELECT,
     });
 
-    return this.issueTokens(user);
+    return this.issueTokens(user, device);
   }
 
-  async login(dto: LoginDto): Promise<TokensDto> {
+  async login(dto: LoginDto, device?: DeviceInfo): Promise<TokensDto | TwoFactorRequiredDto> {
     // login — это userName ИЛИ email ИЛИ phone.
     const user = await this.prisma.user.findFirst({
       where: {
         isDeleted: false,
         OR: [{ userName: dto.login }, { email: dto.login }, { phone: dto.login }],
       },
-      select: { ...USER_SELECT, passwordHash: true },
+      select: { ...USER_SELECT, passwordHash: true, totpEnabled: true },
     });
 
     // Одинаковый 401 и при отсутствии юзера, и при неверном пароле — не подсказываем,
@@ -129,8 +156,13 @@ export class AuthService {
       throw new UnauthorizedException('Неверный логин или пароль');
     }
 
+    // 2FA включена — токены не выдаём, отдаём одноразовый тикет под второй шаг.
+    if (user.totpEnabled) {
+      return this.issueTwoFactorTicket(user.id);
+    }
+
     // passwordHash наружу не утечёт: toDto() собирает ответ по явному списку полей.
-    return this.issueTokens(user);
+    return this.issueTokens(user, device, true);
   }
 
   // ─────────────────────────── tokens ───────────────────────────
@@ -192,7 +224,11 @@ export class AuthService {
     return { message: 'Вы вышли из аккаунта' };
   }
 
-  private async issueTokens(user: UserRow): Promise<TokensDto> {
+  private async issueTokens(
+    user: UserRow,
+    device?: DeviceInfo,
+    alertNewDevice = false,
+  ): Promise<TokensDto> {
     const jti = randomUUID();
 
     const accessToken = await this.jwt.signAsync(
@@ -208,16 +244,38 @@ export class AuthService {
       expiresIn: this.ttl(this.config.get<string>('JWT_REFRESH_EXPIRES_IN', '30d')),
     });
 
+    // Новое устройство = у юзера ещё не было активной сессии с таким userAgent.
+    // Проверяем ДО создания новой строки, чтобы она не «засчиталась» сама себе.
+    if (alertNewDevice && device?.userAgent) {
+      await this.maybeAlertNewDevice(user, device);
+    }
+
     // В БД кладём только SHA-256 от токена: утечка таблицы не даст войти в аккаунты.
     await this.prisma.refreshToken.create({
       data: {
         userId: user.id,
         tokenHash: this.hash(refreshToken),
         expiresAt: this.refreshExpiry(),
+        userAgent: device?.userAgent ?? null,
+        ip: device?.ip ?? null,
       },
     });
 
     return { accessToken, refreshToken, user: this.toDto(user) };
+  }
+
+  /** Письмо «новый вход», если с этого userAgent юзер ещё не входил. Не роняет логин. */
+  private async maybeAlertNewDevice(user: UserRow, device: DeviceInfo): Promise<void> {
+    try {
+      const seen = await this.prisma.refreshToken.findFirst({
+        where: { userId: user.id, userAgent: device.userAgent },
+        select: { id: true },
+      });
+      if (seen) return;
+      await this.mail.sendLoginAlert(user.email, user.userName, device.userAgent ?? '—', device.ip ?? '—');
+    } catch (e) {
+      this.logger.warn(`Не удалось отправить алёрт о входе: ${(e as Error).message}`);
+    }
   }
 
   // ─────────────────────────── сброс пароля ───────────────────────────
@@ -371,6 +429,176 @@ export class AuthService {
     });
     if (!row) throw new UnauthorizedException('Пользователь не найден');
     return this.toDto(row);
+  }
+
+  // ─────────────────────────── 2FA (TOTP) ───────────────────────────
+
+  /** Шаг 1: сгенерировать секрет и отдать otpauth-URI для сканирования (ещё НЕ включает 2FA). */
+  async setup2fa(userId: string): Promise<TwoFactorSetupDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { userName: true, totpEnabled: true },
+    });
+    if (!user) throw new UnauthorizedException('Пользователь не найден');
+    if (user.totpEnabled) throw new BadRequestException('2FA уже включена');
+
+    const secret = generateTotpSecret();
+    await this.prisma.user.update({ where: { id: userId }, data: { totpSecret: secret } });
+    return { secret, otpauthUri: otpauthUri(secret, user.userName) };
+  }
+
+  /** Шаг 2: подтвердить кодом → включить 2FA и выдать резервные коды (показываются один раз). */
+  async enable2fa(userId: string, dto: Enable2faDto): Promise<BackupCodesDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { totpSecret: true, totpEnabled: true },
+    });
+    if (!user) throw new UnauthorizedException('Пользователь не найден');
+    if (user.totpEnabled) throw new BadRequestException('2FA уже включена');
+    if (!user.totpSecret) throw new BadRequestException('Сначала вызовите POST /auth/2fa/setup');
+    if (!verifyTotp(user.totpSecret, dto.code)) {
+      throw new UnauthorizedException('Неверный код');
+    }
+
+    const { codes, hashes } = generateBackupCodes();
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { totpEnabled: true, backupCodes: hashes },
+    });
+    return { backupCodes: codes };
+  }
+
+  /** Отключить 2FA (нужен действующий код или резервный) — чистит секрет и резервные коды. */
+  async disable2fa(userId: string, dto: Enable2faDto): Promise<MessageDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { totpSecret: true, totpEnabled: true, backupCodes: true },
+    });
+    if (!user || !user.totpEnabled || !user.totpSecret) {
+      throw new BadRequestException('2FA не включена');
+    }
+    if (!(await this.consumeSecondFactor(userId, user.totpSecret, user.backupCodes, dto.code))) {
+      throw new UnauthorizedException('Неверный код');
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { totpEnabled: false, totpSecret: null, backupCodes: [] },
+    });
+    return { message: '2FA отключена' };
+  }
+
+  /** Второй шаг логина: тикет + код (TOTP или резервный) → пара токенов. */
+  async verify2fa(dto: Verify2faDto, device?: DeviceInfo): Promise<TokensDto> {
+    let payload: TicketPayload;
+    try {
+      payload = await this.jwt.verifyAsync<TicketPayload>(dto.ticket, {
+        secret: this.config.get<string>('JWT_SECRET', 'change_me_access_secret'),
+      });
+    } catch {
+      throw new UnauthorizedException('Тикет недействителен или истёк');
+    }
+    if (payload.typ !== '2fa') throw new UnauthorizedException('Тикет недействителен');
+
+    // Одноразовость тикета — через Redis (как resetToken).
+    const consumed = await this.redis.del(this.ticketKey(payload.jti));
+    if (consumed === 0) throw new UnauthorizedException('Тикет уже использован или истёк');
+
+    const user = await this.prisma.user.findFirst({
+      where: { id: payload.sub, isDeleted: false },
+      select: { ...USER_SELECT, totpSecret: true, totpEnabled: true, backupCodes: true },
+    });
+    if (!user || !user.totpEnabled || !user.totpSecret) {
+      throw new UnauthorizedException('2FA не активна');
+    }
+    if (!(await this.consumeSecondFactor(user.id, user.totpSecret, user.backupCodes, dto.code))) {
+      throw new UnauthorizedException('Неверный код');
+    }
+    return this.issueTokens(user, device, true);
+  }
+
+  private async issueTwoFactorTicket(userId: string): Promise<TwoFactorRequiredDto> {
+    const jti = randomUUID();
+    const ticket = await this.jwt.signAsync(
+      { sub: userId, jti, typ: '2fa' } satisfies TicketPayload,
+      {
+        secret: this.config.get<string>('JWT_SECRET', 'change_me_access_secret'),
+        expiresIn: this.ttl('5m'),
+      },
+    );
+    // Живёт 5 минут; удаляется при первом verify.
+    await this.redis.set(this.ticketKey(jti), userId, 5 * 60);
+    return { twoFactorRequired: true, ticket };
+  }
+
+  /** Проверяет код: сначала TOTP, потом резервный (и вычёркивает использованный резервный). */
+  private async consumeSecondFactor(
+    userId: string,
+    secret: string,
+    backupCodes: string[],
+    code: string,
+  ): Promise<boolean> {
+    if (verifyTotp(secret, code)) return true;
+
+    const hash = hashBackupCode(code);
+    if (!backupCodes.includes(hash)) return false;
+    // Резервный код одноразовый — убираем его из списка.
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { backupCodes: backupCodes.filter((h) => h !== hash) },
+    });
+    return true;
+  }
+
+  // ─────────────────────────── сессии ───────────────────────────
+
+  /** Активные сессии (устройства). Текущую помечаем, если прислан её refresh-токен. */
+  async listSessions(userId: string, currentRefreshToken?: string): Promise<SessionDto[]> {
+    const currentHash = currentRefreshToken ? this.hash(currentRefreshToken) : null;
+    const rows = await this.prisma.refreshToken.findMany({
+      where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, tokenHash: true, userAgent: true, ip: true, createdAt: true, expiresAt: true },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      userAgent: r.userAgent,
+      ip: r.ip,
+      current: currentHash !== null && r.tokenHash === currentHash,
+      createdAt: r.createdAt,
+      expiresAt: r.expiresAt,
+    }));
+  }
+
+  /** Завершить конкретную сессию (только свою) — её refresh перестаёт работать. */
+  async revokeSession(userId: string, sessionId: string): Promise<MessageDto> {
+    const session = await this.prisma.refreshToken.findUnique({
+      where: { id: sessionId },
+      select: { userId: true, revokedAt: true },
+    });
+    if (!session || session.userId !== userId) throw new NotFoundException('Сессия не найдена');
+    if (!session.revokedAt) {
+      await this.prisma.refreshToken.update({
+        where: { id: sessionId },
+        data: { revokedAt: new Date() },
+      });
+    }
+    return { message: 'Сессия завершена' };
+  }
+
+  /** Выйти со всех устройств, КРОМЕ текущего (его refresh прислали в теле). */
+  async logoutAllExceptCurrent(
+    userId: string,
+    currentRefreshToken: string,
+  ): Promise<LogoutAllResultDto> {
+    const { count } = await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null, tokenHash: { not: this.hash(currentRefreshToken) } },
+      data: { revokedAt: new Date() },
+    });
+    return { revoked: count };
+  }
+
+  private ticketKey(jti: string): string {
+    return `2fa:${jti}`;
   }
 
   // ─────────────────────────── helpers ───────────────────────────
