@@ -541,7 +541,12 @@ export class StoriesService {
     // Промпт + привязка истории-инициатора к нему — в одной транзакции.
     const prompt = await this.prisma.$transaction(async (tx) => {
       const p = await tx.addYoursPrompt.create({
-        data: { text: dto.text, emoji: dto.emoji ?? null, creatorId: userId, originStoryId: storyId },
+        data: {
+          text: dto.text,
+          emoji: dto.emoji ?? null,
+          creatorId: userId,
+          originStoryId: storyId,
+        },
         select: { id: true },
       });
       await tx.story.update({ where: { id: storyId }, data: { addYoursPromptId: p.id } });
@@ -556,11 +561,7 @@ export class StoriesService {
    * Показываем только активные (неистёкшие) истории; закрытые аккаунты, блок и
    * close-friends фильтруются как в остальных лентах историй.
    */
-  async addYoursFeed(
-    viewerId: string,
-    promptId: string,
-    dto: CursorDto,
-  ): Promise<AddYoursFeedDto> {
+  async addYoursFeed(viewerId: string, promptId: string, dto: CursorDto): Promise<AddYoursFeedDto> {
     const prompt = await this.loadPrompt(promptId);
 
     const hidden = await this.access.blockedIds(viewerId);

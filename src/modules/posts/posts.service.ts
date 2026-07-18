@@ -615,10 +615,7 @@ export class PostsService {
       where: {
         isArchived: archived,
         status: PostStatus.PUBLISHED,
-        OR: [
-          { userId },
-          { collaborators: { some: { userId, status: RequestStatus.ACCEPTED } } },
-        ],
+        OR: [{ userId }, { collaborators: { some: { userId, status: RequestStatus.ACCEPTED } } }],
       },
       select: POST_SELECT,
       orderBy: { id: 'desc' },
@@ -631,11 +628,7 @@ export class PostsService {
   // ─────────────────────── совместные посты (Collab) ───────────────────────
 
   /** Автор приглашает соавторов (статус PENDING). Себя приглашать нельзя. */
-  async inviteCollaborators(
-    userId: string,
-    postId: number,
-    userIds: string[],
-  ): Promise<PostDto> {
+  async inviteCollaborators(userId: string, postId: number, userIds: string[]): Promise<PostDto> {
     await this.assertOwner(userId, postId);
 
     const targets = [...new Set(userIds)].filter((id) => id !== userId);

@@ -87,7 +87,8 @@ export class CreatePostDto {
 
   @ApiPropertyOptional({
     example: 42,
-    description: 'id оригинального reel, если это ремикс («Remix of @author»). Только для isReel=true.',
+    description:
+      'id оригинального reel, если это ремикс («Remix of @author»). Только для isReel=true.',
   })
   @IsOptional()
   @Type(() => Number)
@@ -413,7 +414,7 @@ export class ViewQueryDto {
     description: 'Источник просмотра (для insights автора). По умолчанию не пишется.',
   })
   @IsOptional()
-  @IsIn(VIEW_SOURCES as unknown as string[])
+  @IsIn(VIEW_SOURCES)
   source?: string;
 }
 

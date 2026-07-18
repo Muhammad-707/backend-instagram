@@ -272,7 +272,12 @@ export class AuthService {
         select: { id: true },
       });
       if (seen) return;
-      await this.mail.sendLoginAlert(user.email, user.userName, device.userAgent ?? '—', device.ip ?? '—');
+      await this.mail.sendLoginAlert(
+        user.email,
+        user.userName,
+        device.userAgent ?? '—',
+        device.ip ?? '—',
+      );
     } catch (e) {
       this.logger.warn(`Не удалось отправить алёрт о входе: ${(e as Error).message}`);
     }
@@ -557,7 +562,14 @@ export class AuthService {
     const rows = await this.prisma.refreshToken.findMany({
       where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, tokenHash: true, userAgent: true, ip: true, createdAt: true, expiresAt: true },
+      select: {
+        id: true,
+        tokenHash: true,
+        userAgent: true,
+        ip: true,
+        createdAt: true,
+        expiresAt: true,
+      },
     });
     return rows.map((r) => ({
       id: r.id,

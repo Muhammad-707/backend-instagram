@@ -49,7 +49,13 @@ export function generateTotpSecret(): string {
 /** otpauth:// URI — фронт рисует из него QR для сканирования приложением. */
 export function otpauthUri(secret: string, account: string, issuer = 'Instagram'): string {
   const label = encodeURIComponent(`${issuer}:${account}`);
-  const params = new URLSearchParams({ secret, issuer, algorithm: 'SHA1', digits: String(DIGITS), period: String(STEP_SEC) });
+  const params = new URLSearchParams({
+    secret,
+    issuer,
+    algorithm: 'SHA1',
+    digits: String(DIGITS),
+    period: String(STEP_SEC),
+  });
   return `otpauth://totp/${label}?${params.toString()}`;
 }
 
@@ -75,7 +81,10 @@ export function verifyTotp(secret: string, token: string, window = 1): boolean {
   for (let w = -window; w <= window; w++) {
     const expected = hotp(secretBuf, counter + w);
     // timingSafeEqual — сравнение без утечки по времени.
-    if (expected.length === token.length && timingSafeEqual(Buffer.from(expected), Buffer.from(token))) {
+    if (
+      expected.length === token.length &&
+      timingSafeEqual(Buffer.from(expected), Buffer.from(token))
+    ) {
       return true;
     }
   }

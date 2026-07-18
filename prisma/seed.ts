@@ -184,10 +184,26 @@ async function mapPool<T>(items: T[], n: number, fn: (item: T) => Promise<void>)
 }
 
 // ─────────────────────────── утилиты ───────────────────────────
-const imgUrl = (f?: string | null): string | null => (f && f.trim() ? `${IMG_BASE}/${f}` : null);
-
 const mediaTypeOf = (file: string): MediaType =>
   /\.(mp4|mov|webm|m4v|avi|mkv)$/i.test(file) ? MediaType.VIDEO : MediaType.IMAGE;
+
+// Реальный cloud из .env (не заглушка). Если задан — медиа отдаём через Cloudinary
+// fetch: он проксирует и кэширует картинку softclub, а URL становится настоящим
+// res.cloudinary.com/... (то, что и хотели — не «example.com» и не мёртвый CDN).
+const CLOUD = (process.env.CLOUDINARY_CLOUD_NAME ?? '').trim();
+const USE_CLOUD = CLOUD.length > 0 && CLOUD !== 'your_cloud_name';
+
+function throughCloudinary(remote: string, video: boolean): string {
+  if (!USE_CLOUD) return remote;
+  const kind = video ? 'video' : 'image';
+  return `https://res.cloudinary.com/${CLOUD}/${kind}/fetch/${encodeURIComponent(remote)}`;
+}
+
+const imgUrl = (f?: string | null): string | null => {
+  if (!f || !f.trim()) return null;
+  const raw = `${IMG_BASE}/${f}`;
+  return throughCloudinary(raw, mediaTypeOf(f) === MediaType.VIDEO);
+};
 
 function genderOf(g: string | null): Gender {
   const v = (g ?? '').toLowerCase();
@@ -331,20 +347,20 @@ async function importPosts(posts: ScPost[], userIds: string[]): Promise<void> {
         });
       }
 
-      // Комментарии — только от известных нам пользователей.
-      for (const c of post.comments ?? []) {
-        if (!known.has(c.userId)) continue;
+      // Комментарии — только от известных пользователей, ОДНИМ запросом (не по одному:
+      // на удалённой БД Render это резало скорость в разы). skipDuplicates → идемпотентно.
+      const comments = (post.comments ?? []).filter((c) => known.has(c.userId));
+      if (comments.length) {
         await prisma.comment
-          .upsert({
-            where: { id: SC_OFFSET + c.postCommentId },
-            update: {},
-            create: {
+          .createMany({
+            data: comments.map((c) => ({
               id: SC_OFFSET + c.postCommentId,
               postId: pid,
               userId: c.userId,
               text: clip(c.comment, 2200) ?? '…',
               createdAt: safeDate(c.dateCommented) ?? createdAt,
-            },
+            })),
+            skipDuplicates: true,
           })
           .catch(() => undefined);
       }

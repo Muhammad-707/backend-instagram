@@ -374,7 +374,8 @@ export class PostsController {
   @Post(':id/view')
   @ApiOperation({
     summary: 'Просмотр (считается 1 раз на пользователя)',
-    description: 'source (feed/explore/profile/hashtag/reels) пишется при первом просмотре — для insights.',
+    description:
+      'source (feed/explore/profile/hashtag/reels) пишется при первом просмотре — для insights.',
   })
   @ApiOkResponse({ type: ViewDto })
   async view(
@@ -388,7 +389,8 @@ export class PostsController {
   @Get(':id/insights')
   @ApiOperation({
     summary: 'Аналитика поста (только автору)',
-    description: 'Охват, лайки/комменты/сохранения/шеры, engagement-rate, подписчики vs нет, источники.',
+    description:
+      'Охват, лайки/комменты/сохранения/шеры, engagement-rate, подписчики vs нет, источники.',
   })
   @ApiOkResponse({ type: PostInsightsDto })
   @ApiForbiddenResponse({ description: 'Это не ваша публикация' })

@@ -80,7 +80,11 @@ export class TwoFactorSetupDto {
 }
 
 export class BackupCodesDto {
-  @ApiProperty({ type: [String], example: ['ab12-cd34', 'ef56-7890'], description: 'Показываются ОДИН раз' })
+  @ApiProperty({
+    type: [String],
+    example: ['ab12-cd34', 'ef56-7890'],
+    description: 'Показываются ОДИН раз',
+  })
   backupCodes!: string[];
 }
 

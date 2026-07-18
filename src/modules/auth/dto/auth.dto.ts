@@ -156,7 +156,10 @@ export class Verify2faDto {
   @IsNotEmpty()
   ticket!: string;
 
-  @ApiProperty({ example: '123456', description: 'Код из приложения ИЛИ резервный код (ab12-cd34)' })
+  @ApiProperty({
+    example: '123456',
+    description: 'Код из приложения ИЛИ резервный код (ab12-cd34)',
+  })
   @IsString()
   @IsNotEmpty()
   code!: string;

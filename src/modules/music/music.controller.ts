@@ -113,7 +113,8 @@ export class MusicController {
   @Get(':id/reels')
   @ApiOperation({
     summary: '«Use this audio» — все reels с этим треком',
-    description: 'Reels (видео-посты), использующие данный трек. Закрытые аккаунты и блок исключены.',
+    description:
+      'Reels (видео-посты), использующие данный трек. Закрытые аккаунты и блок исключены.',
   })
   @ApiOkResponse({ type: [PostDto] })
   async reels(

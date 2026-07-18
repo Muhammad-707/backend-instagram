@@ -18,10 +18,7 @@ export class FeedController {
       'Возвращает посты от подписок с алгоритмическим ранжированием (близость + свежесть + вовлечённость).',
   })
   @ApiOkResponse({ type: FeedDto })
-  async getFeed(
-    @CurrentUser('id') userId: string,
-    @Query() dto: CursorDto,
-  ): Promise<FeedDto> {
+  async getFeed(@CurrentUser('id') userId: string, @Query() dto: CursorDto): Promise<FeedDto> {
     return this.feedService.getFeed(userId, dto);
   }
 }

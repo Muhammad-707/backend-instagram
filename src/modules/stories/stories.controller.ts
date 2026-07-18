@@ -129,7 +129,8 @@ export class StoriesController {
   @Get('add-yours/:promptId')
   @ApiOperation({
     summary: 'Лента цепочки «Add Yours» (промпт + истории-ответы)',
-    description: 'Кто ответил на промпт. Автор промпта — первым. Закрытые/блок/close-friends фильтруются.',
+    description:
+      'Кто ответил на промпт. Автор промпта — первым. Закрытые/блок/close-friends фильтруются.',
   })
   @ApiOkResponse({ type: AddYoursFeedDto })
   async addYoursFeed(

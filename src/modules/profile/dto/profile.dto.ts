@@ -14,13 +14,14 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { CursorDto } from '../../../common/pagination/cursor.dto';
 
 export const INSIGHTS_PERIODS = ['7d', '30d', '90d'] as const;
 
 export class ProfileInsightsQueryDto {
   @ApiPropertyOptional({ enum: INSIGHTS_PERIODS, default: '7d', description: 'Период аналитики' })
   @IsOptional()
-  @IsIn(INSIGHTS_PERIODS as unknown as string[])
+  @IsIn(INSIGHTS_PERIODS)
   period?: string;
 }
 
@@ -43,10 +44,12 @@ export class ProfileInsightsDto {
   @ApiProperty({ example: 1240, description: 'Уникальных аккаунтов, посмотревших мои посты' })
   accountsReached!: number;
 
-  @ApiProperty({ example: 320, description: 'Уникальных аккаунтов, взаимодействовавших (лайк/коммент/сохр/шер)' })
+  @ApiProperty({
+    example: 320,
+    description: 'Уникальных аккаунтов, взаимодействовавших (лайк/коммент/сохр/шер)',
+  })
   accountsEngaged!: number;
 }
-import { CursorDto } from '../../../common/pagination/cursor.dto';
 
 const USERNAME_RE = /^[a-zA-Z0-9._]+$/;
 

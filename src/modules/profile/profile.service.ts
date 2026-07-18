@@ -6,7 +6,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { FollowStatus, NotifType, PostStatus, Prisma, RequestStatus, TagStatus } from '@prisma/client';
+import {
+  FollowStatus,
+  NotifType,
+  PostStatus,
+  Prisma,
+  RequestStatus,
+  TagStatus,
+} from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
 import { buildCursorPage, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
