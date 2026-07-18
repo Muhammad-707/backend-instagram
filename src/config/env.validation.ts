@@ -132,6 +132,12 @@ function buildSchema(isProd: boolean): Joi.ObjectSchema<Record<string, unknown>>
     MAX_IMAGE_MB: Joi.number().default(10),
     MAX_VIDEO_MB: Joi.number().default(100),
     MAX_AUDIO_MB: Joi.number().default(20),
+
+    // ---- Feed ----
+    // true → лента ранжируется (affinity+recency+engagement−seen); false → хронология (откат).
+    FEED_RANKED: Joi.boolean().default(true),
+    // true → Explore/Reels персональные (интересы+вовлечённость+свежесть, дедуп авторов); false → хронология.
+    EXPLORE_RANKED: Joi.boolean().default(true),
   }).unknown(true);
 }
 

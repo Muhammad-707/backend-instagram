@@ -10,11 +10,19 @@ import {
   MediaType,
   MusicProvider,
   NotifType,
+  PostStatus,
   Prisma,
   ReportTargetType,
   TagStatus,
 } from '@prisma/client';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  JOB_PUBLISH_SCHEDULED_POST,
+  POSTS_QUEUE,
+  PublishScheduledPostPayload,
+} from '../../jobs/jobs.constants';
 import { AccessService } from '../../common/access/access.service';
 import { ChatUtilService } from '../../common/chat/chat-util.service';
 import { AttachedMusicService } from '../music/attached-music.service';
@@ -29,17 +37,21 @@ import { UploadedFile } from '../../storage/storage.types';
 import { UserBriefDto } from '../users/dto/users.dto';
 import { SettingsService } from '../settings/settings.service';
 import { parseHashtags, parseMentions } from './content-parser';
+import { ExploreRankingService } from './explore-ranking.service';
+import { FeedRankingService, RankedCandidate } from './feed-ranking.service';
 import {
   ArchiveDto,
   CreatePostDto,
   ExploreQueryDto,
   FavoriteToggleDto,
+  FeedDto,
   LikeToggleDto,
   MAX_MEDIA,
   PostDto,
   ShareDto,
   ShareResultDto,
   TagActionDto,
+  UpdatePostPrivacyDto,
   ViewDto,
 } from './dto/post.dto';
 
@@ -61,6 +73,11 @@ const POST_SELECT = {
   caption: true,
   isReel: true,
   isArchived: true,
+  status: true,
+  scheduledAt: true,
+  pinnedAt: true,
+  hideLikeCount: true,
+  commentsDisabled: true,
   createdAt: true,
   user: { select: USER_BRIEF },
   media: { orderBy: { order: 'asc' } },
@@ -83,7 +100,7 @@ const POST_SELECT = {
     select: { user: { select: USER_BRIEF } },
   },
   hashtags: { select: { hashtag: { select: { name: true } } } },
-  _count: { select: { likes: true, comments: true, views: true } },
+  _count: { select: { likes: true, comments: true, views: true, favorites: true } },
 } satisfies Prisma.PostSelect;
 
 type PostRow = Prisma.PostGetPayload<{ select: typeof POST_SELECT }>;
@@ -103,6 +120,9 @@ export class PostsService {
     private readonly online: OnlineMusicService,
     private readonly attachedMusic: AttachedMusicService,
     private readonly settings: SettingsService,
+    private readonly ranking: FeedRankingService,
+    private readonly exploreRanking: ExploreRankingService,
+    @InjectQueue(POSTS_QUEUE) private readonly postsQueue: Queue<PublishScheduledPostPayload>,
     config: ConfigService,
   ) {
     this.appUrl = config.get<string>('APP_URL', 'http://localhost:3000').replace(/\/+$/, '');
@@ -163,6 +183,10 @@ export class PostsService {
       // Настройка «кто может отмечать меня»: отфильтровываем тех, кто запретил.
       const taggable = await this.filterTaggable(userId, dto.taggedUserIds);
 
+      // Статус: без него — сразу публикуем (прежнее поведение); DRAFT/SCHEDULED — скрыто.
+      const status = dto.status ?? PostStatus.PUBLISHED;
+      const scheduledAt = this.resolveScheduledAt(status, dto.scheduledAt);
+
       const post = await this.prisma.post.create({
         data: {
           userId,
@@ -170,6 +194,8 @@ export class PostsService {
           locationId: dto.locationId ?? null,
           musicId,
           isReel: dto.isReel ?? false,
+          status,
+          scheduledAt,
           media: { create: mediaRows },
           ...(taggable.length
             ? {
@@ -187,17 +213,12 @@ export class PostsService {
         select: { id: true },
       });
 
-      // Хэштеги, упоминания и уведомления — после создания поста, ему нужен id.
-      await this.linkHashtags(post.id, dto.caption);
-      await this.linkMentions(post.id, userId, dto.caption);
-      this.notifyTagged(post.id, userId, taggable);
-      await this.notifyNewPost(post.id, userId);
-
-      if (musicId) {
-        await this.prisma.music.update({
-          where: { id: musicId },
-          data: { usesCount: { increment: 1 } },
-        });
+      // Публикуем сразу — хэштеги/упоминания/уведомления/музыка. Черновик и отложенный
+      // ничего не рассылают: хэштеги и уведомления появятся при публикации.
+      if (status === PostStatus.PUBLISHED) {
+        await this.finalizePublish(post.id);
+      } else if (status === PostStatus.SCHEDULED && scheduledAt) {
+        await this.enqueuePublish(post.id, scheduledAt);
       }
 
       return this.byId(userId, post.id);
@@ -211,6 +232,104 @@ export class PostsService {
     }
   }
 
+  // ─────────────────────── черновики / отложенная публикация ───────────────────────
+
+  /** Мои черновики и/или запланированные (не видны в лентах и профиле). */
+  async drafts(userId: string, dto: CursorDto, status?: PostStatus): Promise<CursorPage<PostDto>> {
+    const rows = await this.prisma.post.findMany({
+      where: {
+        userId,
+        status: status ?? { in: [PostStatus.DRAFT, PostStatus.SCHEDULED] },
+      },
+      select: POST_SELECT,
+      orderBy: { id: 'desc' },
+      take: dto.limit + 1,
+      ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
+    });
+    return this.toPage(userId, rows, dto.limit);
+  }
+
+  /** Опубликовать свой черновик/запланированный пост вручную (кнопка «Опубликовать»). */
+  async publish(userId: string, id: number): Promise<PostDto> {
+    const post = await this.prisma.post.findUnique({
+      where: { id },
+      select: { userId: true, status: true },
+    });
+    if (!post) throw new NotFoundException('Публикация не найдена');
+    if (post.userId !== userId) throw new ForbiddenException('Это не ваша публикация');
+    if (post.status === PostStatus.PUBLISHED) {
+      throw new BadRequestException('Публикация уже опубликована');
+    }
+
+    await this.postsQueue.remove(`publish-post-${id}`).catch(() => undefined); // снимаем отложенную задачу, если была
+    await this.finalizePublish(id);
+    return this.byId(userId, id);
+  }
+
+  /** Вызывается BullMQ-процессором в назначенное время. Идемпотентна. */
+  async publishScheduled(id: number): Promise<void> {
+    const post = await this.prisma.post.findUnique({ where: { id }, select: { status: true } });
+    if (!post || post.status === PostStatus.PUBLISHED) return;
+    await this.finalizePublish(id);
+  }
+
+  /**
+   * Перевод поста в PUBLISHED + все побочные эффекты: хэштеги, упоминания, уведомления,
+   * счётчик музыки. Одна точка — и для мгновенной, и для отложенной/ручной публикации.
+   */
+  private async finalizePublish(id: number): Promise<void> {
+    const post = await this.prisma.post.update({
+      where: { id },
+      data: { status: PostStatus.PUBLISHED, scheduledAt: null },
+      select: {
+        userId: true,
+        caption: true,
+        musicId: true,
+        taggedUsers: { select: { userId: true } },
+      },
+    });
+
+    await this.linkHashtags(id, post.caption);
+    await this.linkMentions(id, post.userId, post.caption);
+    this.notifyTagged(
+      id,
+      post.userId,
+      post.taggedUsers.map((t) => t.userId),
+    );
+    await this.notifyNewPost(id, post.userId);
+
+    if (post.musicId) {
+      await this.prisma.music.update({
+        where: { id: post.musicId },
+        data: { usesCount: { increment: 1 } },
+      });
+    }
+  }
+
+  private resolveScheduledAt(status: PostStatus, raw?: string): Date | null {
+    if (status !== PostStatus.SCHEDULED) return null;
+    if (!raw) throw new BadRequestException('Для SCHEDULED нужен scheduledAt (время публикации)');
+    const at = new Date(raw);
+    if (Number.isNaN(at.getTime()))
+      throw new BadRequestException('scheduledAt — некорректная дата');
+    if (at.getTime() <= Date.now()) {
+      throw new BadRequestException('scheduledAt должен быть в будущем');
+    }
+    return at;
+  }
+
+  private async enqueuePublish(id: number, at: Date): Promise<void> {
+    try {
+      await this.postsQueue.add(
+        JOB_PUBLISH_SCHEDULED_POST,
+        { postId: id },
+        { delay: Math.max(0, at.getTime() - Date.now()), jobId: `publish-post-${id}` },
+      );
+    } catch {
+      // Redis недоступен — пост останется SCHEDULED; подстрахует cron-подметание.
+    }
+  }
+
   // ─────────────────────── отметки (Instagram «Фото с вами») ───────────────────────
 
   /**
@@ -221,6 +340,7 @@ export class PostsService {
     const rows = await this.prisma.post.findMany({
       where: {
         isArchived: false,
+        status: PostStatus.PUBLISHED,
         taggedUsers: { some: { userId, status: TagStatus.PENDING } },
       },
       select: POST_SELECT,
@@ -273,63 +393,199 @@ export class PostsService {
    * Лента подписок. Три бага старого API чиним здесь:
    *   #3 — userId берём из JWT, а не из query (иначе можно смотреть чужую ленту);
    *   #4 — курсорная пагинация: страницы реально разные;
-   *   #5 — < 300 мс: один запрос с include вместо N+1, сортировка по id (btree),
-   *        подписки берём отдельным лёгким запросом по индексу (followerId, status).
+   *   #5 — < 300 мс: один запрос с include вместо N+1.
+   *
+   * Фаза 1 (Feed Ranking): при FEED_RANKED=true лента ранжируется (affinity+recency+
+   * engagement−seen) через FeedRankingService; иначе — хронология (откат). В конце —
+   * рекомендованные посты (`suggested`) и маркер «You're all caught up» (`allCaughtUp`).
    */
-  async feed(userId: string, dto: CursorDto): Promise<CursorPage<PostDto>> {
+  async feed(userId: string, dto: CursorDto): Promise<FeedDto> {
     const following = await this.prisma.follow.findMany({
       where: { followerId: userId, status: FollowStatus.ACCEPTED },
       select: { followingId: true },
     });
     const authorIds = [...following.map((f) => f.followingId), userId];
 
+    if (!this.ranking.isEnabled()) {
+      return this.feedChronological(userId, authorIds, dto);
+    }
+
+    const ranked = await this.ranking.rankCandidates(userId, authorIds);
+    const offset = dto.cursor ? Math.max(0, Number(dto.cursor) || 0) : 0;
+    const slice = ranked.slice(offset, offset + dto.limit);
+    const hasMore = ranked.length > offset + dto.limit;
+    const nextCursor = hasMore ? String(offset + dto.limit) : null;
+
+    const items = await this.loadPostsInOrder(userId, slice);
+
+    // Рекомендации и «Вы всё посмотрели» — только на последней странице (как в IG внизу ленты).
+    const [suggested, allCaughtUp] = hasMore
+      ? [[] as PostDto[], false]
+      : await Promise.all([
+          this.suggestedPosts(userId, authorIds),
+          this.ranking.isAllCaughtUp(userId, authorIds),
+        ]);
+
+    return { items, nextCursor, hasMore, allCaughtUp, suggested };
+  }
+
+  /** Хронологическая лента (откат FEED_RANKED=false): прежнее поведение, id DESC + курсор. */
+  private async feedChronological(
+    userId: string,
+    authorIds: string[],
+    dto: CursorDto,
+  ): Promise<FeedDto> {
     const rows = await this.prisma.post.findMany({
-      where: { userId: { in: authorIds }, isArchived: false },
+      where: { userId: { in: authorIds }, isArchived: false, status: PostStatus.PUBLISHED },
       select: POST_SELECT,
-      // id, а не createdAt: id монотонен, сравнение целых дешевле и курсор однозначен.
       orderBy: { id: 'desc' },
       take: dto.limit + 1,
       ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
     });
-
-    return this.toPage(userId, rows, dto.limit);
+    const page = await this.toPage(userId, rows, dto.limit);
+    return { ...page, allCaughtUp: false, suggested: [] };
   }
 
-  /** Explore — чужие посты (без своих), закрытые аккаунты и заблокированные исключены. */
+  /**
+   * Загружает посты по ранжированному срезу, СОХРАНЯЯ порядок score (findMany его не гарантирует),
+   * и проставляет isSeen из результата ранжирования.
+   */
+  private async loadPostsInOrder(userId: string, slice: RankedCandidate[]): Promise<PostDto[]> {
+    if (slice.length === 0) return [];
+    const ids = slice.map((s) => s.postId);
+    const rows = await this.prisma.post.findMany({
+      where: { id: { in: ids } },
+      select: POST_SELECT,
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const seen = new Set(slice.filter((s) => s.seen).map((s) => s.postId));
+
+    const [liked, favorited] = await Promise.all([
+      this.likedIds(userId, ids),
+      this.favoritedIds(userId, ids),
+    ]);
+
+    return slice
+      .map((s) => byId.get(s.postId))
+      .filter((r): r is PostRow => r !== undefined)
+      .map((r) => this.toDto(userId, r, liked, favorited, seen));
+  }
+
+  /**
+   * Рекомендованные посты для конца ленты: свежие популярные публикации НЕ-подписок,
+   * публичные, без заблокированных. Сортировка по вовлечённости (лайки) — как «Suggested posts».
+   */
+  private async suggestedPosts(userId: string, authorIds: string[], take = 5): Promise<PostDto[]> {
+    const hidden = await this.access.blockedIds(userId);
+    const rows = await this.prisma.post.findMany({
+      where: {
+        isArchived: false,
+        status: PostStatus.PUBLISHED,
+        isReel: false,
+        createdAt: { gte: new Date(Date.now() - 14 * 86_400_000) },
+        userId: { notIn: [...authorIds, ...hidden] },
+        user: { isPrivate: false, isDeleted: false },
+      },
+      select: POST_SELECT,
+      orderBy: [{ likes: { _count: 'desc' } }, { id: 'desc' }],
+      take,
+    });
+    if (rows.length === 0) return [];
+
+    const ids = rows.map((r) => r.id);
+    const [liked, favorited] = await Promise.all([
+      this.likedIds(userId, ids),
+      this.favoritedIds(userId, ids),
+    ]);
+    return rows.map((r) => this.toDto(userId, r, liked, favorited));
+  }
+
+  /**
+   * Explore — чужие посты (без своих), закрытые аккаунты и заблокированные исключены.
+   * Фаза 2: при EXPLORE_RANKED=true — персонализация (интересы+вовлечённость+свежесть,
+   * дедуп авторов); иначе — хронология (откат). Тот же путь обслуживает Reels (isReel=true).
+   */
   async explore(
     userId: string,
     dto: ExploreQueryDto,
     isReel?: boolean,
   ): Promise<CursorPage<PostDto>> {
     const hidden = await this.access.blockedIds(userId);
-
-    const rows = await this.prisma.post.findMany({
-      where: {
-        isArchived: false,
-        userId: { notIn: [userId, ...hidden] },
-        ...(isReel !== undefined ? { isReel } : {}),
-        // Контент закрытых аккаунтов в Explore не попадает — только у тех, на кого я подписан.
-        OR: [
-          { user: { isPrivate: false } },
-          {
-            user: {
-              isPrivate: true,
-              followers: { some: { followerId: userId, status: FollowStatus.ACCEPTED } },
-            },
+    const where: Prisma.PostWhereInput = {
+      isArchived: false,
+      status: PostStatus.PUBLISHED,
+      userId: { notIn: [userId, ...hidden] },
+      ...(isReel !== undefined ? { isReel } : {}),
+      // Контент закрытых аккаунтов в Explore не попадает — только у тех, на кого я подписан.
+      OR: [
+        { user: { isPrivate: false } },
+        {
+          user: {
+            isPrivate: true,
+            followers: { some: { followerId: userId, status: FollowStatus.ACCEPTED } },
           },
-        ],
-        ...(dto.hashtag
-          ? { hashtags: { some: { hashtag: { name: dto.hashtag.toLowerCase() } } } }
-          : {}),
-        ...(dto.locationId ? { locationId: dto.locationId } : {}),
-      },
+        },
+      ],
+      ...(dto.hashtag
+        ? { hashtags: { some: { hashtag: { name: dto.hashtag.toLowerCase() } } } }
+        : {}),
+      ...(dto.locationId ? { locationId: dto.locationId } : {}),
+    };
+
+    if (!this.exploreRanking.isEnabled()) {
+      const rows = await this.prisma.post.findMany({
+        where,
+        select: POST_SELECT,
+        orderBy: { id: 'desc' },
+        take: dto.limit + 1,
+        ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
+      });
+      return this.toPage(userId, rows, dto.limit);
+    }
+
+    // Ранжируем окно недавних кандидатов (свежие N постов), затем offset-пагинация по score.
+    const CANDIDATE_LIMIT = 300;
+    const candidates = await this.prisma.post.findMany({
+      where,
       select: POST_SELECT,
       orderBy: { id: 'desc' },
-      take: dto.limit + 1,
-      ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
+      take: CANDIDATE_LIMIT,
     });
+    if (candidates.length === 0) {
+      return { items: [], nextCursor: null, hasMore: false };
+    }
 
-    return this.toPage(userId, rows, dto.limit);
+    const orderedIds = await this.exploreRanking.rank(
+      userId,
+      candidates.map((c) => ({
+        id: c.id,
+        userId: c.user.id,
+        createdAt: c.createdAt,
+        hashtags: c.hashtags.map((h) => h.hashtag.name),
+        likes: c._count.likes,
+        comments: c._count.comments,
+        views: c._count.views,
+        favorites: c._count.favorites,
+      })),
+    );
+
+    const offset = dto.cursor ? Math.max(0, Number(dto.cursor) || 0) : 0;
+    const pageIds = orderedIds.slice(offset, offset + dto.limit);
+    const hasMore = orderedIds.length > offset + dto.limit;
+    const nextCursor = hasMore ? String(offset + dto.limit) : null;
+
+    const byId = new Map(candidates.map((c) => [c.id, c]));
+    const rows = pageIds.map((id) => byId.get(id)).filter((r): r is PostRow => r !== undefined);
+    const ids = rows.map((r) => r.id);
+    const [liked, favorited] = await Promise.all([
+      this.likedIds(userId, ids),
+      this.favoritedIds(userId, ids),
+    ]);
+    return {
+      items: rows.map((r) => this.toDto(userId, r, liked, favorited)),
+      nextCursor,
+      hasMore,
+    };
   }
 
   /** Reels — тот же Explore, но только видео-посты. */
@@ -339,7 +595,8 @@ export class PostsService {
 
   async my(userId: string, dto: CursorDto, archived = false): Promise<CursorPage<PostDto>> {
     const rows = await this.prisma.post.findMany({
-      where: { userId, isArchived: archived },
+      // Только опубликованные — черновики/запланированные живут в GET /posts/drafts.
+      where: { userId, isArchived: archived, status: PostStatus.PUBLISHED },
       select: POST_SELECT,
       orderBy: { id: 'desc' },
       take: dto.limit + 1,
@@ -352,6 +609,11 @@ export class PostsService {
     const row = await this.prisma.post.findUnique({ where: { id }, select: POST_SELECT });
     if (!row) throw new NotFoundException('Публикация не найдена');
 
+    // Черновик/запланированный виден только автору — остальным его как бы нет.
+    if (row.status !== PostStatus.PUBLISHED && row.user.id !== userId) {
+      throw new NotFoundException('Публикация не найдена');
+    }
+
     // Чужой закрытый аккаунт / блокировка → 403.
     await this.access.assertCanViewContent(userId, row.user.id);
 
@@ -359,7 +621,58 @@ export class PostsService {
       this.likedIds(userId, [row.id]),
       this.favoritedIds(userId, [row.id]),
     ]);
-    return this.toDto(row, liked, favorited);
+    return this.toDto(userId, row, liked, favorited);
+  }
+
+  async pin(userId: string, id: number): Promise<PostDto> {
+    await this.assertOwner(userId, id);
+
+    const post = await this.prisma.post.findUnique({
+      where: { id },
+      select: { pinnedAt: true },
+    });
+    if (!post) throw new NotFoundException('Публикация не найдена');
+
+    if (post.pinnedAt) {
+      // Уже закреплен -> открепить
+      await this.prisma.post.update({
+        where: { id },
+        data: { pinnedAt: null },
+      });
+    } else {
+      // Закрепить -> сначала проверим лимит (максимум 3)
+      const count = await this.prisma.post.count({
+        where: { userId, pinnedAt: { not: null } },
+      });
+      if (count >= 3) {
+        throw new BadRequestException('Нельзя закрепить больше 3 публикаций в профиле');
+      }
+      await this.prisma.post.update({
+        where: { id },
+        data: { pinnedAt: new Date() },
+      });
+    }
+
+    return this.byId(userId, id);
+  }
+
+  async togglePrivacy(userId: string, id: number, dto: UpdatePostPrivacyDto): Promise<PostDto> {
+    await this.assertOwner(userId, id);
+
+    const data: Prisma.PostUpdateInput = {};
+    if (dto.hideLikeCount !== undefined) {
+      data.hideLikeCount = dto.hideLikeCount;
+    }
+    if (dto.commentsDisabled !== undefined) {
+      data.commentsDisabled = dto.commentsDisabled;
+    }
+
+    await this.prisma.post.update({
+      where: { id },
+      data,
+    });
+
+    return this.byId(userId, id);
   }
 
   // ─────────────────────── правка / удаление ───────────────────────
@@ -541,9 +854,13 @@ export class PostsService {
   private async loadVisiblePost(userId: string, postId: number): Promise<{ userId: string }> {
     const post = await this.prisma.post.findUnique({
       where: { id: postId },
-      select: { userId: true },
+      select: { userId: true, status: true },
     });
     if (!post) throw new NotFoundException('Публикация не найдена');
+    // Нельзя лайкать/комментировать/сохранять черновик или запланированный пост.
+    if (post.status !== PostStatus.PUBLISHED) {
+      throw new NotFoundException('Публикация не найдена');
+    }
     await this.access.assertCanViewContent(userId, post.userId);
     return post;
   }
@@ -665,15 +982,24 @@ export class PostsService {
       this.favoritedIds(userId, ids),
     ]);
 
-    return { ...page, items: page.items.map((r) => this.toDto(r, liked, favorited)) };
+    return { ...page, items: page.items.map((r) => this.toDto(userId, r, liked, favorited)) };
   }
 
-  private toDto(row: PostRow, liked: Set<number>, favorited: Set<number>): PostDto {
+  private toDto(
+    viewerId: string,
+    row: PostRow,
+    liked: Set<number>,
+    favorited: Set<number>,
+    seen?: Set<number>,
+  ): PostDto {
+    const showLikes = !row.hideLikeCount || row.user.id === viewerId;
     return {
       id: row.id,
       caption: row.caption,
       isReel: row.isReel,
       isArchived: row.isArchived,
+      status: row.status,
+      scheduledAt: row.scheduledAt,
       author: this.toBrief(row.user),
       media: row.media.map((m) => ({
         url: m.url,
@@ -689,11 +1015,15 @@ export class PostsService {
       music: this.attachedMusic.toDto(row.music),
       taggedUsers: row.taggedUsers.map((t) => this.toBrief(t.user)),
       hashtags: row.hashtags.map((h) => h.hashtag.name),
-      likesCount: row._count.likes,
+      likesCount: showLikes ? row._count.likes : null,
       commentsCount: row._count.comments,
       viewsCount: row._count.views,
       isLiked: liked.has(row.id),
       isFavorited: favorited.has(row.id),
+      isSeen: seen ? seen.has(row.id) : undefined,
+      pinnedAt: row.pinnedAt,
+      hideLikeCount: row.hideLikeCount,
+      commentsDisabled: row.commentsDisabled,
       createdAt: row.createdAt,
     };
   }

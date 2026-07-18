@@ -49,7 +49,7 @@ export class SpotifyController {
     if (idx > 0) {
       const prefix = id.slice(0, idx).toUpperCase();
       if (prefix === MusicProvider.SPOTIFY || prefix === MusicProvider.DEEZER) {
-        return { provider: prefix as MusicProvider, externalId: id.slice(idx + 1) };
+        return { provider: prefix, externalId: id.slice(idx + 1) };
       }
     }
     return { provider: MusicProvider.SPOTIFY, externalId: id };

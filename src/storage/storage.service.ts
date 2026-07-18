@@ -214,8 +214,7 @@ export class StorageService implements OnModuleInit {
     try {
       const url = new URL(value);
       return (
-        url.hostname.includes('cloudinary.com') &&
-        url.pathname.includes(`/${this.cloudName}/`)
+        url.hostname.includes('cloudinary.com') && url.pathname.includes(`/${this.cloudName}/`)
       );
     } catch {
       return false;

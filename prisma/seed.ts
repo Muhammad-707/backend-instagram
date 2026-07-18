@@ -37,7 +37,7 @@
  *     SEED_PASSWORD    пароль импортированных (default Password123)
  * ─────────────────────────────────────────────────────────────────────────────
  */
-import { Gender, MediaType, MsgType, PrismaClient } from '@prisma/client';
+import { FollowStatus, Gender, MediaType, MsgType, PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -51,6 +51,25 @@ const SEED_CHATS = process.env.SEED_CHATS !== '0';
 const PASSWORD = process.env.SEED_PASSWORD ?? 'Password123';
 const CHAT_LIMIT = 80; // максимум синтетических диалогов
 const LIKES_CAP = 40; // не более стольких лайк-строк на пост
+
+/**
+ * СМЕЩЕНИЕ id для импортируемых записей с INT-первичным ключом (Post/Comment/Story).
+ *
+ * Раньше seed вставлял их с ЯВНЫМ id = softclub-id (post.postId, c.postCommentId,
+ * story.id). На ПУСТОЙ локальной базе это безопасно. Но на НЕпустой (напр. прод на
+ * Render, где уже лежат посты приложения с id 1..N autoincrement) softclub-id
+ * 1..N совпадёт с чужими строками → upsert.update ПЕРЕЗАПИШЕТ реальный пост
+ * (caption/isReel) и deleteMany снесёт его медиа. Чтобы импорт НИКОГДА не задевал
+ * существующие записи, сдвигаем все softclub int-id на большой offset: реальные
+ * строки живут ниже него, импортированные — выше. Идемпотентность (upsert по id)
+ * сохраняется: повторный запуск бьёт в те же (offset+id).
+ *
+ * DEMO_FOR (опц.): userName аккаунта, который после импорта подпишется на всех
+ * импортированных (и они на него) — чтобы его лента (`/posts/feed` отдаёт только
+ * подписки) перестала быть пустой. Не задан — шаг пропускается.
+ */
+const SC_OFFSET = 10_000_000;
+const DEMO_FOR = process.env.DEMO_FOR?.trim() || '';
 
 // ─────────────────────────── типы softclub ───────────────────────────
 interface Envelope<T> {
@@ -291,6 +310,7 @@ async function importPosts(posts: ScPost[], userIds: string[]): Promise<void> {
   const known = new Set(userIds);
   let done = 0;
   for (const post of posts) {
+    const pid = SC_OFFSET + post.postId; // ← защита от коллизии с существующими постами
     const caption = clip([post.title, post.content].filter(Boolean).join('\n').trim() || null, 2200);
     const media = (post.images ?? []).filter(Boolean);
     const isReel = media.length === 1 && mediaTypeOf(media[0]) === MediaType.VIDEO;
@@ -298,16 +318,16 @@ async function importPosts(posts: ScPost[], userIds: string[]): Promise<void> {
 
     try {
       await prisma.post.upsert({
-        where: { id: post.postId },
+        where: { id: pid },
         update: { caption, isReel },
-        create: { id: post.postId, userId: post.userId, caption, isReel, createdAt },
+        create: { id: pid, userId: post.userId, caption, isReel, createdAt },
       });
 
       // Медиа перезаписываем целиком — идемпотентно.
-      await prisma.postMedia.deleteMany({ where: { postId: post.postId } });
+      await prisma.postMedia.deleteMany({ where: { postId: pid } });
       if (media.length) {
         await prisma.postMedia.createMany({
-          data: media.map((f, i) => ({ postId: post.postId, url: imgUrl(f)!, type: mediaTypeOf(f), order: i })),
+          data: media.map((f, i) => ({ postId: pid, url: imgUrl(f)!, type: mediaTypeOf(f), order: i })),
         });
       }
 
@@ -316,11 +336,11 @@ async function importPosts(posts: ScPost[], userIds: string[]): Promise<void> {
         if (!known.has(c.userId)) continue;
         await prisma.comment
           .upsert({
-            where: { id: c.postCommentId },
+            where: { id: SC_OFFSET + c.postCommentId },
             update: {},
             create: {
-              id: c.postCommentId,
-              postId: post.postId,
+              id: SC_OFFSET + c.postCommentId,
+              postId: pid,
               userId: c.userId,
               text: clip(c.comment, 2200) ?? '…',
               createdAt: safeDate(c.dateCommented) ?? createdAt,
@@ -334,7 +354,7 @@ async function importPosts(posts: ScPost[], userIds: string[]): Promise<void> {
       if (likeN > 0) {
         const likers = shuffle(userIds.filter((id) => id !== post.userId)).slice(0, likeN);
         await prisma.postLike
-          .createMany({ data: likers.map((uid) => ({ postId: post.postId, userId: uid })), skipDuplicates: true })
+          .createMany({ data: likers.map((uid) => ({ postId: pid, userId: uid })), skipDuplicates: true })
           .catch(() => undefined);
       }
     } catch {
@@ -374,10 +394,10 @@ async function importStories(users: ScUser[]): Promise<number> {
       const createdAt = safeDate(st.createAt) ?? new Date();
       await prisma.story
         .upsert({
-          where: { id: st.id },
+          where: { id: SC_OFFSET + st.id },
           update: {},
           create: {
-            id: st.id,
+            id: SC_OFFSET + st.id,
             userId: u.id,
             mediaUrl: url,
             mediaType: mediaTypeOf(st.fileName),
@@ -459,63 +479,119 @@ async function synthesizeChats(knownIds: Set<string>): Promise<number> {
 }
 
 /**
- * КРИТИЧНО: мы вставляем Post/Comment/Story с ЯВНЫМ id (= softclub-id). Postgres
- * при явном id НЕ двигает sequence, поэтому следующий автоинкрементный insert из
- * приложения взял бы уже занятый id → 409/unique violation. После импорта сдвигаем
- * каждую sequence на MAX(id)+1, чтобы приложение снова могло создавать записи.
+ * Раньше здесь двигали sequence'ы Post/Comment/Story на MAX(id)+1 — потому что
+ * записи вставлялись с явным softclub-id 1..N, совпадающим с sequence приложения.
+ * Теперь импорт живёт в зоне SC_OFFSET (10M+), а приложение продолжает с низких
+ * значений своей sequence — пересечься они не могут ещё очень долго. Поэтому
+ * трогать sequence больше НЕ нужно: сдвиг только испортил бы id новых постов.
+ *
+ * После импорта подписываем DEMO_FOR на всех импортированных (и их — на него),
+ * чтобы лента этого аккаунта (`/posts/feed` отдаёт только подписки + свои посты)
+ * перестала быть пустой. Если аккаунт не найден — просто пропускаем.
  */
-async function resetSequences(): Promise<void> {
-  for (const t of ['Post', 'Comment', 'Story']) {
-    await prisma.$executeRawUnsafe(
-      `SELECT setval(pg_get_serial_sequence('"${t}"','id'), (SELECT COALESCE(MAX(id),0) FROM "${t}")+1, false)`,
-    );
+async function linkDemoAccount(userIds: string[]): Promise<void> {
+  const me = await prisma.user.findUnique({ where: { userName: DEMO_FOR }, select: { id: true } });
+  if (!me) {
+    console.log(`  ⚠ аккаунт «${DEMO_FOR}» не найден — подписки для ленты не делаем.`);
+    return;
   }
+  const targets = userIds.filter((id) => id !== me.id);
+  await prisma.follow.createMany({
+    data: targets.map((id) => ({ followerId: me.id, followingId: id, status: FollowStatus.ACCEPTED })),
+    skipDuplicates: true,
+  });
+  await prisma.follow.createMany({
+    data: targets.map((id) => ({ followerId: id, followingId: me.id, status: FollowStatus.ACCEPTED })),
+    skipDuplicates: true,
+  });
+  console.log(`  ✅ ${DEMO_FOR} подписан на ${targets.length} импортированных (и они на него) → лента полна`);
+}
+
+/**
+ * Уже импортированные softclub-юзеры из НАШЕЙ базы (email `${id}@softclub.import`).
+ * Нужно для фазовых прогонов (SEED_PHASES без «users»): фазы posts/follows/stories
+ * работают со списком известных id, не дёргая заново 435 профилей у softclub.
+ */
+async function loadImportedIdsFromDb(): Promise<string[]> {
+  const rows = await prisma.user.findMany({
+    where: { email: { endsWith: '@softclub.import' } },
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
 }
 
 // ─────────────────────────── main ───────────────────────────
+// SEED_PHASES: какие фазы выполнять (по умолчанию все). Каждая фаза — отдельный
+// «шторм» из ~435 запросов к softclub; на средах с лимитом времени на процесс
+// удобно гонять их по одной: SEED_PHASES=posts, затем follows, stories, link.
+const PHASES = new Set(
+  (process.env.SEED_PHASES ?? 'users,posts,follows,stories,chats,link')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+);
+
 async function main(): Promise<void> {
-  console.log(`\n🌱 Импорт из softclub-API: ${BASE}\n`);
+  console.log(`\n🌱 Импорт из softclub-API: ${BASE}  ·  фазы: [${[...PHASES].join(', ')}]\n`);
   await login();
   console.log('✔ Авторизация в softclub-API получена');
 
-  const passwordHash = await bcrypt.hash(PASSWORD, 10);
-
-  console.log('→ Тяну список пользователей…');
-  const users = await fetchAllUsers();
+  // Список юзеров: тянем из softclub только если фаза users активна; иначе берём
+  // уже импортированные id из нашей базы — фазам posts/follows/stories хватает id.
+  let users: ScUser[];
+  if (PHASES.has('users')) {
+    console.log('→ Тяну список пользователей…');
+    users = await fetchAllUsers();
+    console.log(`✔ Пользователей к импорту: ${users.length}`);
+  } else {
+    const ids = await loadImportedIdsFromDb();
+    users = ids.map((id) => ({ id, userName: '', fullName: '', avatar: '', subscribersCount: 0 }));
+    console.log(`✔ Известных softclub-юзеров в базе: ${users.length}`);
+  }
   const knownIds = new Set(users.map((u) => u.id));
   const userIds = users.map((u) => u.id);
-  console.log(`✔ Пользователей к импорту: ${users.length}`);
 
-  // Посты тянем ДО «шторма» профильных запросов — пока API «свежий».
-  console.log('→ Тяну посты…');
-  const posts = await fetchAllPosts(knownIds);
-  console.log(`✔ Постов найдено: ${posts.length}`);
+  if (PHASES.has('users')) {
+    console.log('→ Импорт пользователей и профилей…');
+    await upsertUsers(users, await bcrypt.hash(PASSWORD, 10));
+    console.log(`✔ Пользователей импортировано: ${users.length}`);
+  }
 
-  console.log('→ Импорт пользователей и профилей…');
-  await upsertUsers(users, passwordHash);
+  if (PHASES.has('posts')) {
+    console.log('→ Тяну посты…');
+    try {
+      const posts = await fetchAllPosts(knownIds);
+      console.log(`✔ Постов найдено: ${posts.length}`);
+      console.log('→ Импорт постов (медиа, комментарии, лайки)…');
+      await importPosts(posts, userIds);
+      console.log(`✔ Постов импортировано: ${posts.length}`);
+    } catch (e) {
+      console.warn('⚠ Сбор/импорт постов не удался:', String(e));
+    }
+  }
 
-  console.log('→ Импорт постов (медиа, комментарии, лайки)…');
-  await importPosts(posts, userIds);
-  console.log(`✔ Постов импортировано: ${posts.length}`);
+  if (PHASES.has('follows')) {
+    console.log('→ Импорт подписок (followers/following)…');
+    const follows = await importFollows(users, knownIds);
+    console.log(`✔ Связей подписки: ${follows}`);
+  }
 
-  console.log('→ Импорт подписок (followers/following)…');
-  const follows = await importFollows(users, knownIds);
-  console.log(`✔ Связей подписки: ${follows}`);
+  if (PHASES.has('stories')) {
+    console.log('→ Импорт историй…');
+    const stories = await importStories(users);
+    console.log(`✔ Историй импортировано: ${stories}`);
+  }
 
-  console.log('→ Импорт историй…');
-  const stories = await importStories(users);
-  console.log(`✔ Историй импортировано: ${stories}`);
-
-  let chats = 0;
-  if (SEED_CHATS) {
+  if (PHASES.has('chats') && SEED_CHATS) {
     console.log('→ Синтез чатов между взаимными подписчиками…');
-    chats = await synthesizeChats(knownIds);
+    const chats = await synthesizeChats(knownIds);
     console.log(`✔ Чатов создано: ${chats}`);
   }
 
-  // Сдвигаем sequence'ы — иначе приложение не сможет создавать новые посты/истории.
-  await resetSequences();
-  console.log('✔ Sequence-ы (Post/Comment/Story) сброшены на MAX(id)+1');
+  if (PHASES.has('link') && DEMO_FOR) {
+    console.log(`→ Подписываю «${DEMO_FOR}» на импортированных (для непустой ленты)…`);
+    await linkDemoAccount(userIds);
+  }
 
   const [uc, pc, sc, fc, cc, mc] = await Promise.all([
     prisma.user.count(),

@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { NotifType, Prisma } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
@@ -27,6 +32,7 @@ const COMMENT_SELECT = {
   id: true,
   text: true,
   parentId: true,
+  pinnedAt: true,
   createdAt: true,
   userId: true,
   postId: true,
@@ -47,6 +53,9 @@ export class CommentsService {
 
   async add(userId: string, postId: number, text: string, parentId?: number): Promise<CommentDto> {
     const post = await this.loadVisiblePost(userId, postId);
+    if (post.commentsDisabled) {
+      throw new BadRequestException('Комментарии к этой публикации отключены');
+    }
     // Политика автора: кто может комментировать + скрытые слова + ограничения.
     await this.settings.assertCanComment(post.userId, userId, text);
 
@@ -134,7 +143,7 @@ export class CommentsService {
         parentId: parentId ?? null,
       },
       select: COMMENT_SELECT,
-      orderBy: { id: 'desc' },
+      orderBy: [{ pinnedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
       take: dto.limit + 1,
       ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
     });
@@ -203,10 +212,13 @@ export class CommentsService {
 
   // ─────────────── helpers ───────────────
 
-  private async loadVisiblePost(userId: string, postId: number): Promise<{ userId: string }> {
+  private async loadVisiblePost(
+    userId: string,
+    postId: number,
+  ): Promise<{ userId: string; commentsDisabled: boolean }> {
     const post = await this.prisma.post.findUnique({
       where: { id: postId },
-      select: { userId: true },
+      select: { userId: true, commentsDisabled: true },
     });
     if (!post) throw new NotFoundException('Публикация не найдена');
     await this.access.assertCanViewContent(userId, post.userId);
@@ -275,7 +287,59 @@ export class CommentsService {
       repliesCount: row._count.replies,
       isLiked: liked.has(row.id),
       canDelete: row.userId === viewerId || postOwnerId === viewerId,
+      pinnedAt: row.pinnedAt,
       createdAt: row.createdAt,
     };
+  }
+
+  async pin(userId: string, postId: number, commentId: number): Promise<CommentDto> {
+    // 1. Проверяем, что пост существует и текущий пользователь — автор поста
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { userId: true },
+    });
+    if (!post) throw new NotFoundException('Публикация не найдена');
+    if (post.userId !== userId) {
+      throw new ForbiddenException('Только автор публикации может закреплять комментарии');
+    }
+
+    // 2. Проверяем, что комментарий существует и принадлежит этому посту
+    const comment = await this.prisma.comment.findUnique({
+      where: { id: commentId },
+      select: { postId: true, pinnedAt: true },
+    });
+    if (!comment || comment.postId !== postId) {
+      throw new NotFoundException('Комментарий не найден');
+    }
+
+    if (comment.pinnedAt) {
+      // Уже закреплен -> открепить
+      await this.prisma.comment.update({
+        where: { id: commentId },
+        data: { pinnedAt: null },
+      });
+    } else {
+      // Закрепить -> сначала проверим лимит (максимум 3 в Instagram)
+      const count = await this.prisma.comment.count({
+        where: { postId, pinnedAt: { not: null } },
+      });
+      if (count >= 3) {
+        throw new BadRequestException('Нельзя закрепить больше 3 комментариев к одной публикации');
+      }
+      await this.prisma.comment.update({
+        where: { id: commentId },
+        data: { pinnedAt: new Date() },
+      });
+    }
+
+    // 3. Возвращаем обновленный комментарий DTO
+    const updatedComment = await this.prisma.comment.findUnique({
+      where: { id: commentId },
+      select: COMMENT_SELECT,
+    });
+    if (!updatedComment) throw new NotFoundException('Комментарий не найден');
+
+    const liked = await this.likedIds(userId, [commentId]);
+    return this.toDto(updatedComment, liked, post.userId, userId);
   }
 }

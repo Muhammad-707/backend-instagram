@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
   Query,
@@ -33,8 +34,10 @@ import { CommentDto, CommentLikeToggleDto, CreateCommentDto, DeletedDto } from '
 import {
   ArchiveDto,
   CreatePostDto,
+  DraftsQueryDto,
   ExploreQueryDto,
   FavoriteToggleDto,
+  FeedDto,
   LikeToggleDto,
   MAX_MEDIA,
   MyPostsQueryDto,
@@ -44,6 +47,7 @@ import {
   ShareResultDto,
   TagActionDto,
   UpdatePostDto,
+  UpdatePostPrivacyDto,
   ViewDto,
 } from './dto/post.dto';
 import { PostsService } from './posts.service';
@@ -103,16 +107,15 @@ export class PostsController {
 
   @Get('feed')
   @ApiOperation({
-    summary: 'Лента подписок',
+    summary: 'Лента подписок (ранжированная)',
     description:
-      'userId берётся ИЗ JWT (не из query!). Курсорная пагинация. Цель — < 300 мс: ' +
-      'один запрос с include, без N+1.',
+      'userId берётся ИЗ JWT (не из query!). При FEED_RANKED=true лента ранжируется ' +
+      '(близость к автору + свежесть + вовлечённость − уже просмотренное); иначе — хронология. ' +
+      'В ответе: items (страница), suggested (рекомендации не-подписок), allCaughtUp («Вы всё посмотрели»). ' +
+      'Курсор — смещение в ранжированном списке.',
   })
-  @ApiOkResponse({ type: [PostDto] })
-  async feed(
-    @CurrentUser('id') userId: string,
-    @Query() dto: CursorDto,
-  ): Promise<CursorPage<PostDto>> {
+  @ApiOkResponse({ type: FeedDto })
+  async feed(@CurrentUser('id') userId: string, @Query() dto: CursorDto): Promise<FeedDto> {
     return this.postsService.feed(userId, dto);
   }
 
@@ -134,6 +137,19 @@ export class PostsController {
     @Query() dto: MyPostsQueryDto,
   ): Promise<CursorPage<PostDto>> {
     return this.postsService.my(userId, dto, dto.archived ?? false);
+  }
+
+  @Get('drafts')
+  @ApiOperation({
+    summary: 'Мои черновики и запланированные (не видны в лентах/профиле)',
+    description: 'status=DRAFT или SCHEDULED для фильтра; без него — оба.',
+  })
+  @ApiOkResponse({ type: [PostDto] })
+  async drafts(
+    @CurrentUser('id') userId: string,
+    @Query() dto: DraftsQueryDto,
+  ): Promise<CursorPage<PostDto>> {
+    return this.postsService.drafts(userId, dto, dto.status);
   }
 
   @Get()
@@ -264,6 +280,43 @@ export class PostsController {
     return this.postsService.setArchived(userId, id, false);
   }
 
+  @Patch(':id/pin')
+  @ApiOperation({ summary: 'Закрепить / открепить публикацию (max 3)' })
+  @ApiOkResponse({ type: PostDto })
+  @ApiForbiddenResponse({ description: 'Это не ваша публикация' })
+  async pin(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<PostDto> {
+    return this.postsService.pin(userId, id);
+  }
+
+  @Patch(':id/privacy')
+  @ApiOperation({ summary: 'Изменить настройки отображения лайков и комментариев' })
+  @ApiOkResponse({ type: PostDto })
+  @ApiForbiddenResponse({ description: 'Это не ваша публикация' })
+  async togglePrivacy(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePostPrivacyDto,
+  ): Promise<PostDto> {
+    return this.postsService.togglePrivacy(userId, id, dto);
+  }
+
+  @Put(':id/publish')
+  @ApiOperation({
+    summary: 'Опубликовать черновик/запланированный пост сейчас',
+    description: 'Снимает отложенную задачу (если была) и публикует немедленно.',
+  })
+  @ApiOkResponse({ type: PostDto })
+  @ApiForbiddenResponse({ description: 'Это не ваша публикация' })
+  async publish(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<PostDto> {
+    return this.postsService.publish(userId, id);
+  }
+
   // ─────────── реакции ───────────
 
   @Post(':id/like')
@@ -382,5 +435,17 @@ export class PostsController {
     @Query() dto: CursorDto,
   ): Promise<CursorPage<CommentDto>> {
     return this.commentsService.list(userId, id, dto);
+  }
+
+  @Patch(':postId/comments/:id/pin')
+  @ApiOperation({ summary: 'Закрепить / открепить комментарий к публикации (только автор поста)' })
+  @ApiOkResponse({ type: CommentDto })
+  @ApiForbiddenResponse({ description: 'Только автор публикации может закреплять комментарии' })
+  async pinComment(
+    @CurrentUser('id') userId: string,
+    @Param('postId', ParseIntPipe) postId: number,
+    @Param('id', ParseIntPipe) commentId: number,
+  ): Promise<CommentDto> {
+    return this.commentsService.pin(userId, postId, commentId);
   }
 }

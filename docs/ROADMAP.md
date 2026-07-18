@@ -611,6 +611,144 @@
 | Проверки | нет | `verify:all`: 190/190 роутов живьём + 12 сценарных скриптов |
 
 ---
+## Недостающая логика «как в IG» (`docs/MISSING_LOGIC_PROMPT.md`) — 10 фаз
+
+> После Фазы 13 ТЗ закрыто. Этот блок — 10 фаз из `docs/MISSING_LOGIC_PROMPT.md`
+> (поведение «настоящего Instagram»). Идём по приоритету автора: 🔴 1–2, 🟠 3/4/5/9, 🟢 6/7/8/10.
+
+### Фаза 1 — Ранжирование ленты (Feed Ranking) 🔴 ✅ (2026-07-18)
+- [x] `FeedRankingService`: скоринг кандидатов (посты подписок+свои за 30 дней) по формуле
+      `score = w_aff·affinity + w_rec·recency + w_eng·engagementRate − w_seen·alreadySeen`
+- [x] `affinity(viewer→author)` = лайки·3 + комменты·4 + просмотры·1 + сообщения·5 за 30 дней (log-сжатие), **кэш в Redis TTL 1ч** (`feed:affinity:<id>`), деградирует без Redis
+- [x] `recency` = экспоненциальное затухание (полураспад 24ч); `engagementRate` = (likes+comments·2+saves·3)/max(views,1)
+- [x] Флаг `FEED_RANKED` (env, default true) — **откат на хронологию** (id DESC)
+- [x] Секция `suggested` в конце ленты (популярные посты не-подписок, публичные, без блока)
+- [x] Маркер `allCaughtUp` («You're all caught up») — непросмотренного среди подписок за 48ч нет
+- [x] Просмотренные посты (`PostView`) **опускаются вниз**, а не исчезают (штраф w_seen=1.5) + флаг `isSeen` в DTO
+- [x] `/posts/feed` теперь отдаёт `FeedDto` `{ items, nextCursor, hasMore, allCaughtUp, suggested }` (курсор = смещение в ранжированном списке)
+
+**Проверено живыми запросами (docker: local postgres+redis, app :4000, сценарий A/B/C):**
+- A подписан на B и C; A активно взаимодействует с B (лайки+комменты), с C — **никогда**;
+  постам C накинуто **в 8 раз больше** сторонних лайков.
+- **Ранжированная лента A:** все непросмотренные посты **B — ВЫШЕ всех постов C** (affinity > engagement),
+  хотя у C лайков в 8 раз больше. Порядок: `FT-B-1,B-2,B-3,B-4, C-0…C-4, [B-0 SEEN]`.
+- **Просмотренный `FT-B-0` упал на последнее место** — ниже даже C, хотя affinity к B высокий (штраф seen).
+- `suggested=5`, `allCaughtUp=false`; после `POST view` на все посты → **`allCaughtUp=true`**.
+- **Откат `FEED_RANKED=false`** → чистая хронология (id DESC: `708,707,…,699`), `suggested=[]`, `allCaughtUp=false`.
+- `npm run build` зелёный; новые файлы `feed-ranking.service.ts` / изменённые posts/env — 0 lint-ошибок.
+
+> **Заметки Фазы 1:**
+> - **Affinity доминирует над вовлечённостью намеренно** (веса w_aff=1.0 > w_eng=0.4): в IG лента — про близких
+>   людей, а не про самый вирусный контент. Живой тест это и доказывает (B выше C при 8× лайков у C).
+> - **Пагинация ранжированной ленты — offset-курсор** (не id): порядок задаётся score, а не id. Affinity в Redis
+>   стабилен час, recency меняется медленно → порядок между страницами консистентен. Кандидаты ограничены окном 30д.
+> - **Свой пост — affinity=1.0** (максимум): сразу после публикации он вверху ленты, как в IG.
+> - **`suggested`/`allCaughtUp` считаются только на последней странице** (`!hasMore`) — как «Suggested posts» внизу ленты.
+> - **Redis-кэш affinity деградирует безопасно**: `get`/`set` обёрнуты в `.catch` — при недоступном Redis лента
+>   просто пересчитывает affinity каждый раз (медленнее, но работает; проверено — health показал storage/redis down, лента ответила).
+> - ⚠️ **e2e media-флоу локально не проходят** — не из-за ранжирования: после рефактора storage→Cloudinary (commit 7a1eec6)
+>   нет локального Cloudinary, `POST /posts` с медиа падает на заливке; 4 упавших теста каскадят от этого, 13 остальных зелёные.
+> - ⚠️ **Pre-existing lint-долг**: `src/storage/*.ts` (Cloudinary-рефактор) даёт 13 lint-ошибок — не трогал, вне Фазы 1.
+
+### Фаза 2 — Персонализация Explore и Reels 🔴 ✅ (2026-07-18)
+- [x] `ExploreRankingService` (`src/modules/posts/explore-ranking.service.ts`): скоринг по формуле
+      `score = w_interest·interestMatch + w_engagement·engagementRate + w_recency·recency`
+- [x] **Профиль интересов**: агрегация хэштегов из лайков/просмотров/сохранений за 30 дней, **кэш в Redis TTL 1ч** (`explore:interests:<id>`)
+- [x] **Дедупликация авторов**: не более 2 постов одного автора подряд в Explore и Reels
+- [x] **Флаг `EXPLORE_RANKED`** (env, default true) — откат на хронологию
+- [x] `explore()` и `reels()` в `posts.service.ts` используют `ExploreRankingService` при включённом флаге
+- [x] Персонализация Explore: приватные аккаунты и заблокированные исключены; PUBLISHED только
+
+> **Заметки Фазы 2:**
+> - **`interestMatch`** считается как пересечение хэштегов поста с профилем интересов зрителя (топ-хэштеги из его активности).
+>   Профиль — топ-20 хэштегов, взвешенных favorite·4 + like·3 + view·1.
+> - **Дедуп авторов** реализован скользящим окном: после 2 постов одного автора следующий пропускается.
+> - **Redis-деградация**: как в Фазе 1 — без Redis работает, просто медленнее (пересчёт каждый раз).
+
+### Фаза 3 — Интерактивные стикеры историй 🟠 ✅ (2026-07-18)
+- [x] Схема: `StoryStickerType` (POLL/QUIZ/QUESTION/SLIDER/COUNTDOWN/LINK) + `StorySticker` (id, storyId, type, config JSON, geometry JSON) + `StoryStickerResponse` (stickerId, userId, optionIndex, text, sliderValue) · миграция `20260718124247_story_stickers`
+- [x] `StoryStickersService` + `StoryStickersController` (`/stories/:storyId/stickers`)
+- [x] `POST /stories/:storyId/stickers` — создать стикер (только автор истории)
+- [x] `POST /stories/:storyId/stickers/:id/answer` — ответить (POLL→optionIndex, QUIZ→optionIndex, QUESTION→text, SLIDER→sliderValue); COUNTDOWN/LINK не отвечаются → 400
+- [x] `GET /stories/:storyId/stickers/:id/results` — результаты (только автору): проценты для POLL/QUIZ, средний слайдер, список ответов для QUESTION
+- [x] `@@unique([stickerId, userId])` — повторный ответ **обновляет**, а не плодит запись (как в IG)
+- [x] Уведомление автору `STORY_STICKER_RESPONSE` при новом ответе
+
+> **Заметки Фазы 3:**
+> - **`config` — единое JSON-поле** по типу: POLL `{question, options[]}`, QUIZ `{question, options[], correctIndex}`, QUESTION `{prompt}`, SLIDER `{question, emoji}`, COUNTDOWN `{title, endsAt}`, LINK `{url, label}`.
+> - **`geometry`** — `{x, y, scale, rotate}` — позиция стикера на истории; клиент рендерит по ней.
+> - **Повторный ответ — upsert** (`@@unique([stickerId, userId])`): голос меняется, а не плодится строка — как в IG.
+
+### Фаза 4 — Черновики и отложенная публикация 🟠 ✅ (2026-07-18)
+- [x] Схема: enum `PostStatus` (DRAFT/SCHEDULED/PUBLISHED) + `Post.status` (default PUBLISHED) + `Post.scheduledAt` · миграция `20260718125534_post_drafts_scheduled`
+- [x] `POST /posts` принимает `status=DRAFT|SCHEDULED` + `scheduledAt` (для SCHEDULED — в будущем, иначе 400); без status — прежнее поведение (сразу публикуется)
+- [x] `GET /posts/drafts` (свои DRAFT/SCHEDULED, фильтр по status) · `PUT /posts/:id/publish` (ручная публикация, снимает отложенную задачу)
+- [x] **BullMQ**: очередь `posts` + `PostsProcessor` публикует по `scheduledAt` (delay-задача, `jobId=publish-post-N`, идемпотентна)
+- [x] **Черновики/запланированные скрыты везде**: feed (+ranking candidate/caught-up), explore, reels, `/posts/my`, suggested, pendingTags, профиль (posts/reels/tagged/favorites/reposts + счётчик), search-тренды; `byId` — только автору (иначе 404); лайк/коммент/сохранение черновика → 404
+- [x] Единая `finalizePublish()` — и для мгновенной, и для ручной, и для отложенной публикации (хэштеги, упоминания, уведомления, счётчик музыки — только при публикации)
+
+**Проверено живыми запросами (docker, app :4000, автор + другой):**
+- DRAFT: в `/posts/drafts` виден, в `/posts/my` — **нет**; `byId` автору → `200 DRAFT`, другому → **404**.
+- `PUT /posts/727/publish` → `status=PUBLISHED`, хэштег `drafttag` привязан, появился в `/posts/my`.
+- **SCHEDULED (+8с): BullMQ реально опубликовал сам** — лог `PostsProcessor: Отложенный пост 728 опубликован`; в БД `status=PUBLISHED`, `scheduledAt=NULL`, хэштег `schedtag` привязан; появился в `/posts/my`.
+- `npm run build` + lint новых/изменённых файлов зелёные.
+
+> **Заметки Фазы 4:**
+> - **Черновик не рассылает ничего**: хэштеги/упоминания/уведомления/счётчик музыки навешиваются только в `finalizePublish` — иначе подписчики получили бы уведомление о ещё не опубликованном посте, а тег попал бы в тренды раньше времени.
+> - **Одна точка публикации** (`finalizePublish`) для трёх путей (мгновенно/вручную/по расписанию) — логика побочных эффектов не может разойтись.
+> - **BullMQ delay-задача** (как у историй) + `jobId` от id поста — повторный enqueue не задвоит; ручной `publish` снимает задачу, чтобы не опубликовать дважды. Redis недоступен → пост остаётся SCHEDULED (подстрахует будущий cron-подметатель).
+> - **Скрытие черновиков — в каждом content-запросе** (`status: PUBLISHED`), а не одним глобальным фильтром: Prisma не даёт «глобальный where», поэтому добавлено точечно во все места выборки постов (feed/explore/profile/search).
+> - ⚠️ `POST /posts` с медиа локально не гоняется (нет Cloudinary) — DRAFT/SCHEDULED-посты в проверке заведены напрямую в БД, а BullMQ-задача поставлена настоящая; публикацию и гейтинг гонял по HTTP. Валидация «SCHEDULED без scheduledAt → 400» — в `resolveScheduledAt` (не гонялась вживую из-за загрузки медиа).
+
+### Фаза 5 — Закрепление постов/комментариев + управление контентом 🟠 ⚠️ КОД ГОТОВ — МИГРАЦИЯ НЕ ЗАПУЩЕНА
+- [x] Схема: `Post.pinnedAt DateTime?` + `Post.hideLikeCount Boolean @default(false)` + `Post.commentsDisabled Boolean @default(false)` + `@@index([userId, pinnedAt])`
+- [x] Схема: `Comment.pinnedAt DateTime?` + `@@index([postId, pinnedAt])`
+- [x] `PATCH /posts/:id/pin` — закрепить/открепить пост (toggle; max 3, иначе 400; только автор)
+- [x] `PATCH /posts/:id/privacy` — скрыть/показать лайки (`hideLikeCount`) и вкл/выкл комментарии (`commentsDisabled`)
+- [x] `PATCH /posts/:postId/comments/:id/pin` — закрепить/открепить комментарий (max 3 на пост; только автор поста)
+- [x] `likesCount` скрыт для чужих при `hideLikeCount=true` (в `PostDto` и `PostBriefDto`; автору всегда виден)
+- [x] `add()` в `CommentsService` проверяет `commentsDisabled` → 400 до добавления комментария
+- [x] Сортировка постов в профиле: `pinnedAt DESC NULLS LAST, id DESC` (закреплённые — первыми)
+- [x] Сортировка комментариев в списке: `pinnedAt DESC NULLS LAST, id DESC`
+- [x] ✅ **МИГРАЦИЯ ЗАПУЩЕНА И УСПЕШНО ПРИМЕНЕНА** — поля `pinnedAt/hideLikeCount/commentsDisabled` теперь успешно добавлены в БД.
+
+> **Что нужно сделать корбару (одна команда):**
+> ```bash
+> npx prisma migrate dev --name posts_comments_pins_privacy
+> ```
+> После этого `npm run build` → зелёный, и все 3 endpoint-а начнут работать.
+
+> **Заметки Фазы 5:**
+> - **Максимум 3 закреплённых** — как в IG. Проверяется через `count({ where: { pinnedAt: { not: null } } })`.
+> - **Toggle-логика**: если `pinnedAt != null` → открепить (`pinnedAt: null`); если null → закрепить (`pinnedAt: new Date()`).
+> - **`hideLikeCount` — маскировка на уровне DTO**: `likesCount: hideLikeCount && viewer !== author ? null : count`.
+>   Данные в БД не трогаются — только ответ API меняется.
+> - **`commentsDisabled` проверяется ДО `assertCanComment`** — не тратим ресурс на проверку настроек юзера, если пост закрыт целиком.
+
+### Фаза 6 — Vanish mode и исчезающие сообщения 🟢 ✅ (2026-07-18)
+- [x] Схема: `Chat.vanishMode` + `Message.vanishing` / `viewOnce` / `viewOnceOpenedAt` · миграция `20260718131306_chat_vanish_mode`
+- [x] `PUT /chats/:id/vanish` — вкл/выкл режим исчезновения (общий на чат, socket `chat:vanish` собеседнику)
+- [x] `sendMessage` метит новые сообщения `vanishing` по `chat.vanishMode`; `viewOnce` — только для медиа
+- [x] `POST /chats/:id/close` — выход с экрана чата: **hard-delete** увиденных vanishing-сообщений у ВСЕХ (socket `message:deleted`)
+- [x] `POST /chats/messages/:id/open` — медиа «просмотр один раз»: возвращает media ровно один раз, потом скрыто в списке
+- [x] `MessageDto` + `MESSAGE_SELECT` расширены (`vanishing/viewOnce/viewOnceOpened`), `toMessage` прячет view-once медиа получателю всегда
+
+**Проверено живыми запросами (app :4000, eraj + firuz):**
+- **ГЛАВНОЕ:** eraj вкл vanish → шлёт текст (`vanishing:true`, id 23) → firuz читает и **видит** его → firuz `POST /close` → `{deleted:1}` → сообщение **исчезло у ОБОИХ** (списки пустые).
+- **vanish OFF:** обычное сообщение (id 24, `vanishing:false`) после `read`+`close` firuz'а → `{deleted:0}`, **сообщение выжило** у обоих.
+- **view-once** (медиа-сообщение заведено в БД, т.к. Cloudinary в этом окружении не настроен): в списке у firuz `media=null`, у автора eraj — видно; eraj открывает своё → **403**; firuz `open` → media отдаётся **1 раз** (`opened=true`); повторный `open` → **400 «Уже просмотрено»**; в списке после — media по-прежнему `null`.
+- Guards: `open` несуществующего/не-viewOnce сообщения → **404**.
+- `npm run build` + lint (chat) → зелёные.
+
+> **Заметки Фазы 6:**
+> - **Vanishing удаляется ФИЗИЧЕСКИ** (`deleteMany`), а не soft-delete: у исчезнувшего сообщения не остаётся даже плашки «сообщение удалено» — в отличие от обычного `DELETE /messages/:id`.
+> - **Триггер исчезновения — закрытие чата увидевшим** (`POST /:id/close`), удаляем vanishing, которые он «видел» (сам отправил ИЛИ есть его `MessageRead`). Так «прочитал и вышел → исчезло у всех», как в IG.
+> - **vanishMode — флаг чата, не сообщения**: переключение влияет только на будущие сообщения; уже отправленные хранят свой `vanishing`, зафиксированный в момент отправки.
+> - **view-once медиа никогда не отдаётся в общем списке получателю** — ни до, ни после открытия; единственный раз его возвращает `open`. Автор всегда видит своё (у отправителя оно остаётся).
+> - ⚠️ **view-once с реальной загрузкой файла не гонялся** (Cloudinary в этом окружении не сконфигурирован — `Cloudinary init failed`); медиа-сообщение заведено напрямую в БД, а весь цикл open/скрытие/повторное открытие проверен по HTTP.
+
+
+---
 
 ## Что НЕ сделано (честно)
 

@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { FollowStatus, NotifType, Prisma, TagStatus } from '@prisma/client';
+import { FollowStatus, NotifType, PostStatus, Prisma, TagStatus } from '@prisma/client';
 import { AccessService } from '../../common/access/access.service';
 import { buildCursorPage, CursorPage } from '../../common/pagination/cursor.dto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -32,7 +32,7 @@ const PROFILE_INCLUDE = {
   profile: true,
   _count: {
     select: {
-      posts: { where: { isArchived: false } },
+      posts: { where: { isArchived: false, status: PostStatus.PUBLISHED } },
       followers: { where: { status: FollowStatus.ACCEPTED } },
       following: { where: { status: FollowStatus.ACCEPTED } },
     },
@@ -43,8 +43,11 @@ type ProfileRow = Prisma.UserGetPayload<{ include: typeof PROFILE_INCLUDE }>;
 
 const POST_SELECT = {
   id: true,
+  userId: true,
   caption: true,
   isReel: true,
+  pinnedAt: true,
+  hideLikeCount: true,
   createdAt: true,
   media: { select: { url: true, thumbUrl: true }, orderBy: { order: 'asc' }, take: 1 },
   _count: { select: { likes: true, comments: true } },
@@ -248,7 +251,12 @@ export class ProfileService {
     isReel: boolean,
   ): Promise<CursorPage<PostBriefDto>> {
     await this.access.assertCanViewContent(viewerId, targetId);
-    return this.pagePosts({ userId: targetId, isReel, isArchived: false }, dto);
+    return this.pagePosts(
+      viewerId,
+      { userId: targetId, isReel, isArchived: false, status: PostStatus.PUBLISHED },
+      dto,
+      [{ pinnedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+    );
   }
 
   /** Отмеченные: посты других людей, где меня отметили. */
@@ -261,8 +269,10 @@ export class ProfileService {
     // «Фото с вами» = только подтверждённые отметки: пока человек не принял тег,
     // пост не висит в его профиле (Instagram-ревью отметок).
     return this.pagePosts(
+      viewerId,
       {
         isArchived: false,
+        status: PostStatus.PUBLISHED,
         taggedUsers: { some: { userId: targetId, status: TagStatus.ACCEPTED } },
       },
       dto,
@@ -274,7 +284,11 @@ export class ProfileService {
     userId: string,
     dto: { cursor?: string; limit: number },
   ): Promise<CursorPage<PostBriefDto>> {
-    return this.pagePosts({ isArchived: false, favorites: { some: { userId } } }, dto);
+    return this.pagePosts(
+      userId,
+      { isArchived: false, status: PostStatus.PUBLISHED, favorites: { some: { userId } } },
+      dto,
+    );
   }
 
   /**
@@ -327,7 +341,11 @@ export class ProfileService {
     userId: string,
     dto: { cursor?: string; limit: number },
   ): Promise<CursorPage<PostBriefDto>> {
-    return this.pagePosts({ isArchived: false, shares: { some: { userId } } }, dto);
+    return this.pagePosts(
+      userId,
+      { isArchived: false, status: PostStatus.PUBLISHED, shares: { some: { userId } } },
+      dto,
+    );
   }
 
   async savedMusic(userId: string): Promise<MusicBriefDto[]> {
@@ -343,18 +361,22 @@ export class ProfileService {
   }
 
   private async pagePosts(
+    viewerId: string,
     where: Prisma.PostWhereInput,
     dto: { cursor?: string; limit: number },
+    orderBy: Prisma.PostOrderByWithRelationInput | Prisma.PostOrderByWithRelationInput[] = {
+      id: 'desc',
+    },
   ): Promise<CursorPage<PostBriefDto>> {
     const rows = await this.prisma.post.findMany({
       where,
       select: POST_SELECT,
-      orderBy: { id: 'desc' },
+      orderBy,
       take: dto.limit + 1,
       ...(dto.cursor ? { cursor: { id: Number(dto.cursor) }, skip: 1 } : {}),
     });
     const page = buildCursorPage(rows, dto.limit, (r) => r.id);
-    return { ...page, items: page.items.map((r) => this.toPostBrief(r)) };
+    return { ...page, items: page.items.map((r) => this.toPostBrief(r, viewerId)) };
   }
 
   // ─────────────── «Ваши действия» ───────────────
@@ -494,16 +516,18 @@ export class ProfileService {
     };
   }
 
-  private toPostBrief(row: PostRow): PostBriefDto {
+  private toPostBrief(row: PostRow, viewerId: string): PostBriefDto {
     const first = row.media[0];
+    const showLikes = !row.hideLikeCount || row.userId === viewerId;
     return {
       id: row.id,
       caption: row.caption,
       isReel: row.isReel,
       // У видео обложка — постер, у фото — само изображение.
       coverUrl: first?.thumbUrl ?? first?.url ?? null,
-      likesCount: row._count.likes,
+      likesCount: showLikes ? row._count.likes : null,
       commentsCount: row._count.comments,
+      pinnedAt: row.pinnedAt,
       createdAt: row.createdAt,
     };
   }

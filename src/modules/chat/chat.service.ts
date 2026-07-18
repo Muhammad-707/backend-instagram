@@ -67,6 +67,9 @@ const MESSAGE_SELECT = {
   noteSnapshot: true,
   editedAt: true,
   isDeleted: true,
+  vanishing: true,
+  viewOnce: true,
+  viewOnceOpenedAt: true,
   sentAt: true,
   reactions: { select: { userId: true, emoji: true } },
   reads: { select: { userId: true } },
@@ -542,7 +545,7 @@ export class ChatService {
     dto: SendMessageDto,
     file?: UploadedFile,
   ): Promise<MessageDto> {
-    const { peer } = await this.loadChat(userId, chatId);
+    const { peer, part } = await this.loadChat(userId, chatId);
     // Блокировка — понятие пары. В группе блок одного участника не должен
     // затыкать весь чат остальным, поэтому проверяем только 1-на-1.
     if (peer) await this.access.assertNotBlocked(userId, peer.id);
@@ -598,6 +601,10 @@ export class ChatService {
         replyToId: dto.replyToId ?? null,
         sharedPostId: dto.sharedPostId ?? null,
         musicId,
+        // Vanish mode задаётся на уровне чата: пока он включён, каждое новое
+        // сообщение исчезающее. «view once» — свойство конкретного медиа.
+        vanishing: part.chat.vanishMode,
+        viewOnce: (dto.viewOnce ?? false) && mediaUrl !== null,
       },
       select: MESSAGE_SELECT,
     });
@@ -791,6 +798,90 @@ export class ChatService {
       data: { isMuted: muted },
     });
     return { ok: true };
+  }
+
+  // ─────────────── vanish mode (исчезающие сообщения) ───────────────
+
+  /**
+   * Включить/выключить vanish mode. Флаг общий на чат (как в IG — режим виден
+   * обоим), поэтому переключение прилетает собеседнику через сокет.
+   * Уже отправленные сообщения не трогаем: vanishing проставляется в момент
+   * отправки — переключение влияет только на будущие сообщения.
+   */
+  async setVanishMode(userId: string, chatId: number, enabled: boolean): Promise<OkDto> {
+    await this.loadChat(userId, chatId);
+    await this.prisma.chat.update({ where: { id: chatId }, data: { vanishMode: enabled } });
+    const peers = await this.chatPeers(chatId, userId);
+    this.realtime.emitToUsers(peers, 'chat:vanish', { chatId, enabled });
+    return {
+      ok: true,
+      message: enabled ? 'Режим исчезновения включён' : 'Режим исчезновения выключен',
+    };
+  }
+
+  /**
+   * «Закрыть чат» (пользователь ушёл с экрана переписки). Vanishing-сообщения,
+   * которые этот пользователь уже видел, удаляются физически у ВСЕХ — как в IG,
+   * где исчезающее пропадает, когда увидевший его закрывает диалог.
+   *
+   * «Видел» = либо сам отправил, либо есть его MessageRead. Удаляем именно
+   * физически (delete), а не soft-delete: у исчезнувшего сообщения не должно
+   * остаться даже плашки «сообщение удалено».
+   */
+  async closeChat(userId: string, chatId: number): Promise<DeletedCountDto> {
+    await this.loadChat(userId, chatId);
+
+    const seen = await this.prisma.message.findMany({
+      where: {
+        chatId,
+        vanishing: true,
+        OR: [{ senderId: userId }, { reads: { some: { userId } } }],
+      },
+      select: { id: true },
+    });
+    if (seen.length === 0) return { deleted: 0 };
+
+    const ids = seen.map((m) => m.id);
+    await this.prisma.message.deleteMany({ where: { id: { in: ids } } });
+
+    const peers = await this.chatPeers(chatId, userId);
+    this.realtime.emitToUsers([...peers, userId], 'message:deleted', { ids, chatId });
+    return { deleted: ids.length };
+  }
+
+  /**
+   * Открыть медиа «просмотр один раз». Возвращает сообщение (с медиа) один раз;
+   * фиксируем `viewOnceOpenedAt`, после чего `toMessage` скроет media всем, кроме
+   * автора. Открывать может только получатель — своё «view once» не «сжигают».
+   */
+  async openViewOnce(userId: string, messageId: number): Promise<MessageDto> {
+    const msg = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { senderId: true, chatId: true, viewOnce: true, viewOnceOpenedAt: true },
+    });
+    if (!msg || !msg.viewOnce) throw new NotFoundException('Медиа «просмотр один раз» не найдено');
+    await this.loadChat(userId, msg.chatId);
+    if (msg.senderId === userId) {
+      throw new ForbiddenException('Своё «просмотр один раз» открывать не нужно');
+    }
+    if (msg.viewOnceOpenedAt) throw new BadRequestException('Уже просмотрено');
+
+    const updated = await this.prisma.message.update({
+      where: { id: messageId },
+      data: { viewOnceOpenedAt: new Date() },
+      select: MESSAGE_SELECT,
+    });
+
+    // Автору сообщаем, что его медиа открыли (у него оно остаётся, но UI покажет «открыто»).
+    const peers = await this.chatPeers(msg.chatId, userId);
+    this.realtime.emitToUsers(peers, 'message:view-once-opened', { messageId, chatId: msg.chatId });
+    // Возвращаем с медиа ЭТОТ единственный раз — открывшему mediaUrl отдаём.
+    return this.toMessageWithMedia(updated, userId);
+  }
+
+  /** Как toMessage, но media отдаётся всегда — для единственного открытия view-once. */
+  private toMessageWithMedia(m: MessageRow, viewerId: string): MessageDto {
+    return { ...this.toMessage(m, viewerId), mediaUrl: m.mediaUrl };
   }
 
   /** «Удалить чат» — выходим сами; когда участников не осталось, чат гибнет каскадом. */
@@ -1110,7 +1201,7 @@ export class ChatService {
     others: UserBriefRow[];
     otherParts: { nickname: string | null; isAdmin: boolean; user: UserBriefRow }[];
     isAdmin: boolean;
-    part: { isMuted: boolean; chat: { theme: string } };
+    part: { isMuted: boolean; chat: { theme: string; vanishMode: boolean } };
   }> {
     const part = await this.prisma.chatParticipant.findUnique({
       where: { chatId_userId: { chatId, userId } },
@@ -1122,6 +1213,7 @@ export class ChatService {
             theme: true,
             isGroup: true,
             title: true,
+            vanishMode: true,
             participants: {
               where: { userId: { not: userId } },
               select: { nickname: true, isAdmin: true, user: { select: USER_BRIEF } },
@@ -1146,7 +1238,10 @@ export class ChatService {
       others,
       otherParts,
       isAdmin: part.isAdmin,
-      part: { isMuted: part.isMuted, chat: { theme: part.chat.theme } },
+      part: {
+        isMuted: part.isMuted,
+        chat: { theme: part.chat.theme, vanishMode: part.chat.vanishMode },
+      },
     };
   }
 
@@ -1184,13 +1279,18 @@ export class ChatService {
   }
 
   private toMessage(m: MessageRow, viewerId: string): MessageDto {
+    // «Просмотр один раз»: медиа НИКОГДА не отдаётся в общем списке получателю —
+    // ни до, ни после открытия. Один-единственный раз его возвращает endpoint
+    // `open` (toMessageWithMedia). Автор всегда видит своё — как в IG.
+    const viewOnceHidden = m.viewOnce && m.senderId !== viewerId;
+    const hideMedia = m.isDeleted || viewOnceHidden;
     return {
       id: m.id,
       chatId: m.chatId,
       senderId: m.senderId,
       text: m.isDeleted ? null : m.text,
       type: m.type,
-      mediaUrl: m.isDeleted ? null : m.mediaUrl,
+      mediaUrl: hideMedia ? null : m.mediaUrl,
       duration: m.duration,
       replyToId: m.replyToId,
       sharedPostId: m.sharedPostId,
@@ -1209,6 +1309,9 @@ export class ChatService {
       isDeleted: m.isDeleted,
       // Прочитано, если собеседник (не я) отметил.
       isRead: m.senderId === viewerId && m.reads.some((r) => r.userId !== viewerId),
+      vanishing: m.vanishing,
+      viewOnce: m.viewOnce,
+      viewOnceOpened: m.viewOnceOpenedAt !== null,
       sentAt: m.sentAt,
     };
   }

@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CallStatus, CallType, MsgType, MusicProvider } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
@@ -127,6 +127,23 @@ export class SendMessageDto {
   @IsOptional()
   @IsString()
   externalId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Медиа «просмотр один раз»: после открытия получателем скрывается.',
+    example: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  viewOnce?: boolean;
+}
+
+/** Включить/выключить vanish mode (исчезающие сообщения) в чате. */
+export class VanishDto {
+  @ApiProperty({ example: true, description: 'true — включить режим исчезновения' })
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  enabled!: boolean;
 }
 
 /** Звонок внутри сообщения (type=CALL) — «Аудиозвонок, 5:32» / «Пропущенный». */
@@ -331,6 +348,18 @@ export class MessageDto {
 
   @ApiProperty({ example: false, description: 'Прочитано собеседником' })
   isRead!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description: 'Отправлено в vanish mode (исчезнет при закрытии чата)',
+  })
+  vanishing!: boolean;
+
+  @ApiProperty({ example: false, description: 'Медиа «просмотр один раз»' })
+  viewOnce!: boolean;
+
+  @ApiProperty({ example: false, description: 'view-once медиа уже открыто (media скрыто)' })
+  viewOnceOpened!: boolean;
 
   @ApiProperty()
   sentAt!: Date;

@@ -48,6 +48,9 @@ export class CommentDto {
   })
   canDelete!: boolean;
 
+  @ApiPropertyOptional({ example: null, nullable: true })
+  pinnedAt?: Date | null;
+
   @ApiProperty()
   createdAt!: Date;
 }

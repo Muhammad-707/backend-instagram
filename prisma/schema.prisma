@@ -120,6 +120,22 @@ enum NotifType {
   LIVE_JOIN_REQUEST
   LIVE_JOIN_ACCEPTED
   LIVE_JOIN_DECLINED
+  STORY_STICKER_RESPONSE
+}
+
+enum PostStatus {
+  DRAFT // черновик — виден только автору
+  SCHEDULED // запланирован — опубликуется BullMQ по scheduledAt
+  PUBLISHED // опубликован — виден в лентах/профиле
+}
+
+enum StoryStickerType {
+  POLL // опрос: вариантов 2+
+  QUIZ // викторина: варианты + правильный
+  QUESTION // «задайте вопрос» — свободный текст
+  SLIDER // слайдер эмодзи 0..1
+  COUNTDOWN // обратный отсчёт (не отвечается)
+  LINK // ссылка (не отвечается)
 }
 
 enum ActivityType {
@@ -212,19 +228,20 @@ model User {
   sharesReceived Share[]       @relation("ShareRecipient")
   savedMusic     SavedMusic[]
 
-  stories        Story[]
-  storyViews     StoryView[]
-  storyLikes     StoryLike[]
-  storyReactions StoryReaction[]
-  storyReplies   StoryReply[]
-  highlights     Highlight[]
+  stories          Story[]
+  storyViews       StoryView[]
+  storyLikes       StoryLike[]
+  storyReactions   StoryReaction[]
+  storyReplies     StoryReply[]
+  stickerResponses StoryStickerResponse[]
+  highlights       Highlight[]
 
   notes       Note[]
   noteLikes   NoteLike[]
   noteReplies NoteReply[]
 
-  settings          UserSettings?
-  restrictionsMade  RestrictedAccount[] @relation("RestrictBy")
+  settings           UserSettings?
+  restrictionsMade   RestrictedAccount[] @relation("RestrictBy")
   restrictedByOthers RestrictedAccount[] @relation("RestrictTarget")
 
   chatParticipations ChatParticipant[]
@@ -395,15 +412,20 @@ model CloseFriend {
 // ============================================================
 
 model Post {
-  id         Int      @id @default(autoincrement())
-  userId     String
-  caption    String?  @db.VarChar(2200)
-  locationId Int?
-  musicId    Int?
-  isReel     Boolean  @default(false)
-  isArchived Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id          Int        @id @default(autoincrement())
+  userId      String
+  caption     String?    @db.VarChar(2200)
+  locationId  Int?
+  musicId     Int?
+  isReel      Boolean    @default(false)
+  isArchived  Boolean    @default(false)
+  status      PostStatus @default(PUBLISHED)
+  scheduledAt DateTime? // для SCHEDULED — когда опубликовать
+  pinnedAt    DateTime? // для закрепления постов в профиле (max 3)
+  hideLikeCount Boolean   @default(false) // скрыть счетчик лайков
+  commentsDisabled Boolean @default(false) // выключить комментарии
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
@@ -426,6 +448,7 @@ model Post {
   @@index([isReel, createdAt])
   @@index([locationId])
   @@index([musicId])
+  @@index([userId, pinnedAt])
 }
 
 model PostMedia {
@@ -637,6 +660,7 @@ model Comment {
   userId    String
   parentId  Int?
   text      String   @db.VarChar(2200)
+  pinnedAt  DateTime? // для закрепления комментариев в посте
   createdAt DateTime @default(now())
 
   post     Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
@@ -649,6 +673,7 @@ model Comment {
   @@index([postId, createdAt])
   @@index([parentId])
   @@index([userId, createdAt])
+  @@index([postId, pinnedAt])
 }
 
 model CommentLike {
@@ -733,6 +758,7 @@ model Story {
   likes      StoryLike[]
   reactions  StoryReaction[]
   replies    StoryReply[]
+  stickers   StorySticker[]
   highlights HighlightStory[]
   mentions   Mention[]
   messages   Message[]        @relation("StoryOfMessage")
@@ -796,6 +822,41 @@ model StoryReply {
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([storyId, createdAt])
+}
+
+// Интерактивный стикер истории (опрос/викторина/вопрос/слайдер/отсчёт/ссылка).
+// config — параметры по типу: POLL {question, options[]}; QUIZ {question, options[], correctIndex};
+// QUESTION {prompt}; SLIDER {question, emoji}; COUNTDOWN {title, endsAt}; LINK {url, label}.
+model StorySticker {
+  id        String           @id @default(uuid())
+  storyId   Int
+  type      StoryStickerType
+  config    Json
+  geometry  Json? // {x,y,scale,rotate} — положение на истории
+  createdAt DateTime         @default(now())
+
+  story     Story                  @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  responses StoryStickerResponse[]
+
+  @@index([storyId])
+}
+
+// Ответ зрителя на стикер. Одна изменяемая реакция на пару (стикер, юзер) — @@unique.
+// Поля по типу: POLL/QUIZ → optionIndex; QUESTION → text; SLIDER → sliderValue (0..1).
+model StoryStickerResponse {
+  id          String   @id @default(uuid())
+  stickerId   String
+  userId      String
+  optionIndex Int?
+  text        String?  @db.VarChar(500)
+  sliderValue Float?
+  createdAt   DateTime @default(now())
+
+  sticker StorySticker @relation(fields: [stickerId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([stickerId, userId])
+  @@index([stickerId])
 }
 
 model Highlight {
@@ -893,6 +954,9 @@ model Chat {
   isGroup   Boolean  @default(false)
   title     String?
   theme     String   @default("default")
+  // Vanish mode (как в IG): пока включён, новые сообщения помечаются vanishing и
+  // исчезают у обоих, как только увидевший их закрыл чат (POST /chats/:id/close).
+  vanishMode Boolean @default(false)
   createdAt DateTime @default(now())
 
   participants ChatParticipant[]
@@ -937,6 +1001,12 @@ model Message {
   noteSnapshot String?   @db.VarChar(60) // заметка умрёт через 24ч — превью в чате не должно сломаться
   editedAt     DateTime?
   isDeleted    Boolean   @default(false)
+  // Vanish mode: сообщение отправлено в исчезающем режиме — при закрытии чата
+  // увидевшим оно удаляется физически (не soft-delete: следа «удалено» тоже нет).
+  vanishing    Boolean   @default(false)
+  // «Просмотр один раз» для медиа: после открытия получателем mediaUrl прячется.
+  viewOnce         Boolean   @default(false)
+  viewOnceOpenedAt DateTime?
   sentAt       DateTime  @default(now())
 
   chat       Chat         @relation(fields: [chatId], references: [id], onDelete: Cascade)

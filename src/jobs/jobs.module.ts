@@ -1,7 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { STORIES_QUEUE } from './jobs.constants';
+import { POSTS_QUEUE, STORIES_QUEUE } from './jobs.constants';
 
 /**
  * @Global — очередь историй нужна StoriesService (продюсер) и процессору (консьюмер).
@@ -24,6 +24,7 @@ import { STORIES_QUEUE } from './jobs.constants';
       },
     }),
     BullModule.registerQueue({ name: STORIES_QUEUE }),
+    BullModule.registerQueue({ name: POSTS_QUEUE }),
   ],
   exports: [BullModule],
 })

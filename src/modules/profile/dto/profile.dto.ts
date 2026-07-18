@@ -214,11 +214,14 @@ export class PostBriefDto {
   })
   coverUrl?: string | null;
 
-  @ApiProperty({ example: 24 })
-  likesCount!: number;
+  @ApiPropertyOptional({ example: 24, nullable: true })
+  likesCount?: number | null;
 
   @ApiProperty({ example: 3 })
   commentsCount!: number;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  pinnedAt?: Date | null;
 
   @ApiProperty()
   createdAt!: Date;

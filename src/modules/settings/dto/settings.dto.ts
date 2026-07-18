@@ -1,7 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CommentPolicy, InteractionPolicy } from '@prisma/client';
 import { Transform } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 const toBool = ({ value }: { value: unknown }): boolean =>
   value === true || value === 'true' || value === '1';
@@ -29,12 +37,18 @@ export class UpdateSettingsDto {
   @IsEnum(InteractionPolicy)
   whoCanMention?: InteractionPolicy;
 
-  @ApiPropertyOptional({ enum: InteractionPolicy, description: 'Кто может писать мне (иначе — в запросы)' })
+  @ApiPropertyOptional({
+    enum: InteractionPolicy,
+    description: 'Кто может писать мне (иначе — в запросы)',
+  })
   @IsOptional()
   @IsEnum(InteractionPolicy)
   whoCanMessage?: InteractionPolicy;
 
-  @ApiPropertyOptional({ enum: CommentPolicy, description: 'Кто может комментировать мои публикации' })
+  @ApiPropertyOptional({
+    enum: CommentPolicy,
+    description: 'Кто может комментировать мои публикации',
+  })
   @IsOptional()
   @IsEnum(CommentPolicy)
   whoCanComment?: CommentPolicy;

@@ -54,6 +54,7 @@ import {
   ReportChatDto,
   SendMessageDto,
   ThemeDto,
+  VanishDto,
 } from './dto/chat.dto';
 
 const HARD_LIMIT_BYTES = 100 * 1024 * 1024;
@@ -404,6 +405,47 @@ export class ChatController {
     @Body() dto: MuteDto,
   ): Promise<OkDto> {
     return this.chatService.setMute(userId, id, dto.muted);
+  }
+
+  @Put(':id/vanish')
+  @ApiOperation({
+    summary: 'Vanish mode — режим исчезающих сообщений',
+    description:
+      'Пока включён, новые сообщения исчезают у обоих при закрытии чата (POST /:id/close).',
+  })
+  @ApiOkResponse({ type: OkDto })
+  async setVanish(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: VanishDto,
+  ): Promise<OkDto> {
+    return this.chatService.setVanishMode(userId, id, dto.enabled);
+  }
+
+  @Post(':id/close')
+  @ApiOperation({
+    summary: 'Закрыть чат (уйти с экрана) — сжечь увиденные исчезающие сообщения',
+    description: 'Vanishing-сообщения, которые вы уже видели, удаляются у всех участников.',
+  })
+  @ApiOkResponse({ type: DeletedCountDto })
+  async closeChat(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<DeletedCountDto> {
+    return this.chatService.closeChat(userId, id);
+  }
+
+  @Post('messages/:id/open')
+  @ApiOperation({
+    summary: 'Открыть медиа «просмотр один раз»',
+    description: 'Возвращает media один раз; после открытия оно скрывается для всех, кроме автора.',
+  })
+  @ApiOkResponse({ type: MessageDto })
+  async openViewOnce(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<MessageDto> {
+    return this.chatService.openViewOnce(userId, id);
   }
 
   @Delete(':id')

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { MediaType, MusicProvider, TagStatus } from '@prisma/client';
+import { MediaType, MusicProvider, PostStatus, TagStatus } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
@@ -83,6 +83,33 @@ export class CreatePostDto {
   @Transform(toBool)
   @IsBoolean()
   isReel?: boolean;
+
+  @ApiPropertyOptional({
+    enum: [PostStatus.DRAFT, PostStatus.SCHEDULED],
+    description:
+      'DRAFT → черновик, SCHEDULED → отложенная публикация (нужен scheduledAt). Без него — сразу публикуется.',
+  })
+  @IsOptional()
+  @IsEnum(PostStatus)
+  status?: PostStatus;
+
+  @ApiPropertyOptional({
+    example: '2026-07-18T18:00:00.000Z',
+    description: 'ISO-время публикации для status=SCHEDULED (в будущем)',
+  })
+  @IsOptional()
+  @IsString()
+  scheduledAt?: string;
+}
+
+export class DraftsQueryDto extends CursorDto {
+  @ApiPropertyOptional({
+    enum: [PostStatus.DRAFT, PostStatus.SCHEDULED],
+    description: 'Фильтр: только DRAFT или только SCHEDULED. Без него — оба.',
+  })
+  @IsOptional()
+  @IsEnum(PostStatus)
+  status?: PostStatus;
 }
 
 export class UpdatePostDto {
@@ -110,6 +137,18 @@ export class ReportPostDto {
   @IsNotEmpty()
   @MaxLength(500)
   reason!: string;
+}
+
+export class UpdatePostPrivacyDto {
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  hideLikeCount?: boolean;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  commentsDisabled?: boolean;
 }
 
 export class MyPostsQueryDto extends CursorDto {
@@ -185,6 +224,16 @@ export class PostDto {
   @ApiProperty({ example: false })
   isArchived!: boolean;
 
+  @ApiPropertyOptional({ enum: PostStatus, description: 'DRAFT/SCHEDULED/PUBLISHED' })
+  status?: PostStatus;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description: 'Когда опубликуется (SCHEDULED)',
+  })
+  scheduledAt?: Date | null;
+
   @ApiProperty({ type: UserBriefDto, description: 'Автор — НИКОГДА не null' })
   author!: UserBriefDto;
 
@@ -203,8 +252,8 @@ export class PostDto {
   @ApiProperty({ type: [String], example: ['travel', 'sunset'] })
   hashtags!: string[];
 
-  @ApiProperty({ example: 24 })
-  likesCount!: number;
+  @ApiPropertyOptional({ example: 24, nullable: true })
+  likesCount?: number | null;
 
   @ApiProperty({ example: 3 })
   commentsCount!: number;
@@ -218,8 +267,48 @@ export class PostDto {
   @ApiProperty({ example: false, description: 'В избранном ли у меня' })
   isFavorited!: boolean;
 
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Смотрел ли Я этот пост (для ранжированной ленты — просмотренные уходят вниз)',
+  })
+  isSeen?: boolean;
+
+  @ApiPropertyOptional({ example: null, nullable: true })
+  pinnedAt?: Date | null;
+
+  @ApiProperty({ example: false })
+  hideLikeCount!: boolean;
+
+  @ApiProperty({ example: false })
+  commentsDisabled!: boolean;
+
   @ApiProperty()
   createdAt!: Date;
+}
+
+/**
+ * Ответ ленты подписок. Помимо курсорной страницы:
+ *  - `allCaughtUp` — все посты подписок за последние сутки уже просмотрены («You're all caught up»);
+ *  - `suggested` — рекомендованные посты не-подписок (показываются в конце ленты, как в IG).
+ */
+export class FeedDto {
+  @ApiProperty({ type: [PostDto] })
+  items!: PostDto[];
+
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'Курсор следующей страницы' })
+  nextCursor!: string | null;
+
+  @ApiProperty({ example: true })
+  hasMore!: boolean;
+
+  @ApiProperty({ example: false, description: '«Вы всё посмотрели» — непросмотренного нет' })
+  allCaughtUp!: boolean;
+
+  @ApiProperty({
+    type: [PostDto],
+    description: 'Рекомендованные посты (не-подписки), в конце ленты',
+  })
+  suggested!: PostDto[];
 }
 
 export class LikeToggleDto {

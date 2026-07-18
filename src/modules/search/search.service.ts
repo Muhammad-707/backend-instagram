@@ -117,7 +117,7 @@ export class SearchService {
     // Тренд = сколько раз тег использован в постах за последние 7 дней.
     const grouped = await this.prisma.postHashtag.groupBy({
       by: ['hashtagId'],
-      where: { post: { createdAt: { gte: weekAgo }, isArchived: false } },
+      where: { post: { createdAt: { gte: weekAgo }, isArchived: false, status: 'PUBLISHED' } },
       _count: { postId: true },
       orderBy: { _count: { postId: 'desc' } },
       take: TOP_LIMIT,
