@@ -16,12 +16,19 @@ export class MailService implements OnModuleInit {
   private readonly logger = new Logger(MailService.name);
   private readonly transporter: Transporter;
   private readonly from: string;
+  /**
+   * Resend HTTP API (https://api.resend.com) поверх HTTPS/443. Render блокирует
+   * исходящие SMTP-порты (25/465/587), поэтому на проде почта уходит через HTTP.
+   * Если RESEND_API_KEY задан — используем его; иначе падаем на SMTP (dev/MailHog).
+   */
+  private readonly resendApiKey: string;
 
   constructor(private readonly config: ConfigService) {
     const host = this.config.get<string>('SMTP_HOST', 'localhost');
     const port = Number(this.config.get<string>('SMTP_PORT', '1025'));
     const user = this.config.get<string>('SMTP_USER', '');
     const pass = this.config.get<string>('SMTP_PASS', '');
+    this.resendApiKey = this.config.get<string>('RESEND_API_KEY', '');
     this.from = this.config.get<string>('SMTP_FROM', 'Instagram <no-reply@instagram.local>');
 
     // SMTP_SECURE задаёт TLS явно ('true'/'false'). Если не задан — берём по порту:
@@ -41,12 +48,22 @@ export class MailService implements OnModuleInit {
       // STARTTLS обязателен на 587, но не на implicit-TLS (465) и не на dev (1025).
       requireTLS: !secure && port === 587,
     });
-    this.logger.log(
-      `SMTP: ${host}:${port} secure=${secure} ${user ? '(auth)' : '(без auth — dev)'}`,
-    );
+    if (this.resendApiKey) {
+      this.logger.log(`Mail: Resend HTTP API (from=${this.from})`);
+    } else {
+      this.logger.log(
+        `SMTP: ${host}:${port} secure=${secure} ${user ? '(auth)' : '(без auth — dev)'}`,
+      );
+    }
   }
 
   async onModuleInit(): Promise<void> {
+    // При Resend проверять нечего: SMTP-транспорт не используется, а лишний
+    // verify() на проде даст ложный «Connection timeout» (SMTP-порты закрыты).
+    if (this.resendApiKey) {
+      this.logger.log('Mail: Resend активен, SMTP verify пропущен');
+      return;
+    }
     try {
       await this.transporter.verify();
       this.logger.log('SMTP connected');
@@ -66,12 +83,50 @@ export class MailService implements OnModuleInit {
       this.logger.warn(`Письмо "${options.subject}" → ${options.to} без text/html — не отправлено`);
       return false;
     }
+    if (this.resendApiKey) {
+      return this.sendViaResend(options);
+    }
     try {
       await this.transporter.sendMail({ from: this.from, ...options });
       this.logger.log(`Письмо отправлено: "${options.subject}" → ${options.to}`);
       return true;
     } catch (e) {
       this.logger.error(`Не удалось отправить письмо на ${options.to}: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Отправка через Resend REST API поверх HTTPS — без SMTP-портов, работает на Render.
+   * Тело: { from, to, subject, text?, html? }. Ошибку не бросаем — логируем и вернём false.
+   */
+  private async sendViaResend(options: MailOptions): Promise<boolean> {
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: this.from,
+          to: [options.to],
+          subject: options.subject,
+          ...(options.text ? { text: options.text } : {}),
+          ...(options.html ? { html: options.html } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const detail = await res.text();
+        this.logger.error(
+          `Resend не отправил письмо на ${options.to}: HTTP ${res.status} ${detail}`,
+        );
+        return false;
+      }
+      this.logger.log(`Письмо отправлено (Resend): "${options.subject}" → ${options.to}`);
+      return true;
+    } catch (e) {
+      this.logger.error(`Resend недоступен (${options.to}): ${(e as Error).message}`);
       return false;
     }
   }
