@@ -14,10 +14,19 @@ async function main(): Promise<void> {
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
 
+  // Сервер для swagger.json: SWAGGER_SERVER_URL → APP_URL → продакшн-плейсхолдер.
+  // Пустой servers[] заставляет фронт/кодоген бить в localhost — поэтому всегда задаём.
+  const serverUrl = (
+    process.env.SWAGGER_SERVER_URL ||
+    process.env.APP_URL ||
+    'https://<ваш-сервис>.onrender.com'
+  ).replace(/\/+$/, '');
+
   const config = new DocumentBuilder()
     .setTitle('Instagram Backend API')
     .setDescription('NestJS + Prisma + PostgreSQL. Конверт ответа: { data, errors, statusCode }')
     .setVersion('1.0')
+    .addServer(serverUrl, 'Сервер API (SWAGGER_SERVER_URL / APP_URL)')
     .addBearerAuth(
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
       'access-token',

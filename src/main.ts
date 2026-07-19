@@ -12,6 +12,7 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService);
   const port = config.get<number>('PORT', 3000);
   const frontendUrl = config.get<string>('FRONTEND_URL', 'http://localhost:3001');
+  const appUrl = config.get<string>('APP_URL', `http://localhost:${port}`).replace(/\/+$/, '');
 
   app.setGlobalPrefix('api');
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
@@ -35,6 +36,7 @@ async function bootstrap(): Promise<void> {
     .setTitle('Instagram Backend API')
     .setDescription('NestJS + Prisma + PostgreSQL. Конверт ответа: { data, errors, statusCode }')
     .setVersion('1.0')
+    .addServer(appUrl, 'Текущий сервер (APP_URL)')
     .addBearerAuth(
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
       'access-token',
