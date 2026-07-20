@@ -84,13 +84,16 @@ export class ProfileController {
   }
 
   @Get('me/reposts')
-  @ApiOperation({ summary: 'Мои репосты' })
+  @ApiOperation({
+    summary: 'Мои репосты',
+    description: 'Посты, которые я репостнул кнопкой «двойная стрелка» (POST /posts/{id}/repost).',
+  })
   @ApiOkResponse({ type: [PostBriefDto] })
-  async reposts(
+  async myReposts(
     @CurrentUser('id') userId: string,
     @Query() dto: CursorDto,
   ): Promise<CursorPage<PostBriefDto>> {
-    return this.profileService.reposts(userId, dto);
+    return this.profileService.reposts(userId, userId, dto);
   }
 
   @Get('me/saved-music')
@@ -231,6 +234,18 @@ export class ProfileController {
     @Query() dto: CursorDto,
   ): Promise<CursorPage<PostBriefDto>> {
     return this.profileService.posts(viewerId, targetId, dto, true);
+  }
+
+  @Get(':userId/reposts')
+  @UseGuards(PrivacyGuard)
+  @ApiOperation({ summary: 'Репосты пользователя (закрытый аккаунт → 403)' })
+  @ApiOkResponse({ type: [PostBriefDto] })
+  async reposts(
+    @CurrentUser('id') viewerId: string,
+    @Param('userId') targetId: string,
+    @Query() dto: CursorDto,
+  ): Promise<CursorPage<PostBriefDto>> {
+    return this.profileService.reposts(viewerId, targetId, dto);
   }
 
   @Get(':userId/tagged')

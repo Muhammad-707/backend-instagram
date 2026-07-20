@@ -353,16 +353,36 @@ export class ProfileService {
     });
   }
 
-  /** Репосты: модели Repost нет — репост это Share, сделанный мной. */
+  /**
+   * Вкладка «Репосты» (двойная стрелка). Источник — модель Repost, а не Share:
+   * Share — это «отправил в чат / скопировал ссылку», такое во вкладке показывать нельзя.
+   *
+   * Идём от таблицы Repost, а не от Post, потому что порядок здесь — время репоста
+   * (только что репостнутый старый пост должен встать первым), а не id поста.
+   * Поэтому и курсор — id репоста, а не id поста.
+   */
   async reposts(
-    userId: string,
+    viewerId: string,
+    targetId: string,
     dto: { cursor?: string; limit: number },
   ): Promise<CursorPage<PostBriefDto>> {
-    return this.pagePosts(
-      userId,
-      { isArchived: false, status: PostStatus.PUBLISHED, shares: { some: { userId } } },
-      dto,
-    );
+    await this.access.assertCanViewContent(viewerId, targetId);
+
+    const rows = await this.prisma.repost.findMany({
+      where: {
+        userId: targetId,
+        // Автор мог заархивировать/удалить в черновики уже репостнутый пост — тогда он
+        // пропадает и из чужих вкладок «Репосты», иначе репост станет дырой в приватности.
+        post: { isArchived: false, status: PostStatus.PUBLISHED },
+      },
+      select: { id: true, post: { select: POST_SELECT } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: dto.limit + 1,
+      ...(dto.cursor ? { cursor: { id: dto.cursor }, skip: 1 } : {}),
+    });
+
+    const page = buildCursorPage(rows, dto.limit, (r) => r.id);
+    return { ...page, items: page.items.map((r) => this.toPostBrief(r.post, viewerId)) };
   }
 
   async savedMusic(userId: string): Promise<MusicBriefDto[]> {

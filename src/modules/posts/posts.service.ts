@@ -51,6 +51,7 @@ import {
   MAX_MEDIA,
   PostDto,
   PostInsightsDto,
+  RepostToggleDto,
   ShareDto,
   ShareResultDto,
   TagActionDto,
@@ -111,10 +112,17 @@ const POST_SELECT = {
     select: { user: { select: USER_BRIEF } },
   },
   hashtags: { select: { hashtag: { select: { name: true } } } },
-  _count: { select: { likes: true, comments: true, views: true, favorites: true } },
+  _count: { select: { likes: true, comments: true, views: true, favorites: true, reposts: true } },
 } satisfies Prisma.PostSelect;
 
 type PostRow = Prisma.PostGetPayload<{ select: typeof POST_SELECT }>;
+
+/** Что зритель уже сделал с постами страницы: лайк / избранное / репост. */
+interface ViewerFlags {
+  liked: Set<number>;
+  favorited: Set<number>;
+  reposted: Set<number>;
+}
 
 @Injectable()
 export class PostsService {
@@ -476,15 +484,12 @@ export class PostsService {
     const byId = new Map(rows.map((r) => [r.id, r]));
     const seen = new Set(slice.filter((s) => s.seen).map((s) => s.postId));
 
-    const [liked, favorited] = await Promise.all([
-      this.likedIds(userId, ids),
-      this.favoritedIds(userId, ids),
-    ]);
+    const flags = await this.viewerFlags(userId, ids);
 
     return slice
       .map((s) => byId.get(s.postId))
       .filter((r): r is PostRow => r !== undefined)
-      .map((r) => this.toDto(userId, r, liked, favorited, seen));
+      .map((r) => this.toDto(userId, r, flags, seen));
   }
 
   /**
@@ -508,12 +513,11 @@ export class PostsService {
     });
     if (rows.length === 0) return [];
 
-    const ids = rows.map((r) => r.id);
-    const [liked, favorited] = await Promise.all([
-      this.likedIds(userId, ids),
-      this.favoritedIds(userId, ids),
-    ]);
-    return rows.map((r) => this.toDto(userId, r, liked, favorited));
+    const flags = await this.viewerFlags(
+      userId,
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => this.toDto(userId, r, flags));
   }
 
   /**
@@ -592,13 +596,12 @@ export class PostsService {
 
     const byId = new Map(candidates.map((c) => [c.id, c]));
     const rows = pageIds.map((id) => byId.get(id)).filter((r): r is PostRow => r !== undefined);
-    const ids = rows.map((r) => r.id);
-    const [liked, favorited] = await Promise.all([
-      this.likedIds(userId, ids),
-      this.favoritedIds(userId, ids),
-    ]);
+    const flags = await this.viewerFlags(
+      userId,
+      rows.map((r) => r.id),
+    );
     return {
-      items: rows.map((r) => this.toDto(userId, r, liked, favorited)),
+      items: rows.map((r) => this.toDto(userId, r, flags)),
       nextCursor,
       hasMore,
     };
@@ -691,11 +694,8 @@ export class PostsService {
     // Чужой закрытый аккаунт / блокировка → 403.
     await this.access.assertCanViewContent(userId, row.user.id);
 
-    const [liked, favorited] = await Promise.all([
-      this.likedIds(userId, [row.id]),
-      this.favoritedIds(userId, [row.id]),
-    ]);
-    return this.toDto(userId, row, liked, favorited);
+    const flags = await this.viewerFlags(userId, [row.id]);
+    return this.toDto(userId, row, flags);
   }
 
   async pin(userId: string, id: number): Promise<PostDto> {
@@ -927,7 +927,39 @@ export class PostsService {
     return { favorited: true };
   }
 
-  // ─────────────────────── share / report ───────────────────────
+  // ─────────────────────── repost / share / report ───────────────────────
+
+  /**
+   * Кнопка «двойная стрелка»: репост — состояние, а не событие. Повторное нажатие снимает
+   * репост, поэтому здесь toggle, а не create (иначе вкладка «Репосты» набивалась бы
+   * дублями одного поста, а счётчик рос от каждого случайного тапа).
+   *
+   * Свой пост репостить нельзя: во вкладке он и так уже есть, а автор получил бы
+   * уведомление от самого себя.
+   */
+  async toggleRepost(userId: string, postId: number): Promise<RepostToggleDto> {
+    const post = await this.loadVisiblePost(userId, postId);
+    if (post.userId === userId) {
+      throw new BadRequestException('Нельзя репостить собственную публикацию');
+    }
+
+    const existing = await this.prisma.repost.findUnique({
+      where: { postId_userId: { postId, userId } },
+      select: { id: true },
+    });
+
+    if (existing) {
+      await this.prisma.repost.delete({ where: { id: existing.id } });
+      const repostsCount = await this.prisma.repost.count({ where: { postId } });
+      return { reposted: false, repostsCount };
+    }
+
+    await this.prisma.repost.create({ data: { postId, userId } });
+    this.notify(post.userId, userId, NotifType.REPOST_POST, { postId });
+    const repostsCount = await this.prisma.repost.count({ where: { postId } });
+    return { reposted: true, repostsCount };
+  }
+
 
   async share(userId: string, postId: number, dto: ShareDto): Promise<ShareResultDto> {
     const post = await this.loadVisiblePost(userId, postId);
@@ -1074,6 +1106,20 @@ export class PostsService {
     this.events.emit(NOTIFY_EVENT, { userId, actorId, type, ...extra } satisfies NotifyPayload);
   }
 
+  /**
+   * Мои лайк/избранное/репост по всей странице — три запроса на страницу, а не на пост.
+   * Отдаём одной пачкой, чтобы каждый вызывающий не собирал Promise.all руками
+   * (и не забыл добавить репосты, как это было бы при пятом отдельном параметре).
+   */
+  private async viewerFlags(userId: string, postIds: number[]): Promise<ViewerFlags> {
+    const [liked, favorited, reposted] = await Promise.all([
+      this.likedIds(userId, postIds),
+      this.favoritedIds(userId, postIds),
+      this.repostedIds(userId, postIds),
+    ]);
+    return { liked, favorited, reposted };
+  }
+
   /** Мои лайки/избранное — одним запросом на всю страницу, без N+1. */
   private async likedIds(userId: string, postIds: number[]): Promise<Set<number>> {
     if (postIds.length === 0) return new Set();
@@ -1093,29 +1139,30 @@ export class PostsService {
     return new Set(rows.map((r) => r.postId));
   }
 
+  private async repostedIds(userId: string, postIds: number[]): Promise<Set<number>> {
+    if (postIds.length === 0) return new Set();
+    const rows = await this.prisma.repost.findMany({
+      where: { userId, postId: { in: postIds } },
+      select: { postId: true },
+    });
+    return new Set(rows.map((r) => r.postId));
+  }
+
   private async toPage(
     userId: string,
     rows: PostRow[],
     limit: number,
   ): Promise<CursorPage<PostDto>> {
     const page = buildCursorPage(rows, limit, (r) => r.id);
-    const ids = page.items.map((r) => r.id);
+    const flags = await this.viewerFlags(
+      userId,
+      page.items.map((r) => r.id),
+    );
 
-    const [liked, favorited] = await Promise.all([
-      this.likedIds(userId, ids),
-      this.favoritedIds(userId, ids),
-    ]);
-
-    return { ...page, items: page.items.map((r) => this.toDto(userId, r, liked, favorited)) };
+    return { ...page, items: page.items.map((r) => this.toDto(userId, r, flags)) };
   }
 
-  private toDto(
-    viewerId: string,
-    row: PostRow,
-    liked: Set<number>,
-    favorited: Set<number>,
-    seen?: Set<number>,
-  ): PostDto {
+  private toDto(viewerId: string, row: PostRow, flags: ViewerFlags, seen?: Set<number>): PostDto {
     const showLikes = !row.hideLikeCount || row.user.id === viewerId;
     return {
       id: row.id,
@@ -1144,8 +1191,10 @@ export class PostsService {
       likesCount: showLikes ? row._count.likes : null,
       commentsCount: row._count.comments,
       viewsCount: row._count.views,
-      isLiked: liked.has(row.id),
-      isFavorited: favorited.has(row.id),
+      repostsCount: row._count.reposts,
+      isLiked: flags.liked.has(row.id),
+      isFavorited: flags.favorited.has(row.id),
+      isReposted: flags.reposted.has(row.id),
       isSeen: seen ? seen.has(row.id) : undefined,
       pinnedAt: row.pinnedAt,
       hideLikeCount: row.hideLikeCount,

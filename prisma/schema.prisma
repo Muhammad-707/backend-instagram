@@ -111,6 +111,7 @@ enum NotifType {
   LIKE_NOTE
   REPLY_NOTE
   SHARE_POST
+  REPOST_POST
   SAVE_POST
   TAG_POST
   PROFILE_VIEW
@@ -224,6 +225,7 @@ model User {
   postLikes          PostLike[]
   postViews          PostView[]
   favorites          Favorite[]
+  reposts            Repost[]
   collections        Collection[]
   comments           Comment[]
   commentLikes       CommentLike[]
@@ -448,6 +450,7 @@ model Post {
   views         PostView[]
   favorites     Favorite[]
   shares        Share[]
+  reposts       Repost[]
   taggedUsers   PostTag[]
   hashtags      PostHashtag[]
   mentions      Mention[]
@@ -597,6 +600,27 @@ model Favorite {
   @@unique([postId, userId])
   @@index([userId, createdAt])
   @@index([collectionId])
+}
+
+/**
+ * Репост (кнопка «двойная стрелка» под постом/reel).
+ *
+ * Это НЕ Share: Share — «отправить в чат/историю/скопировать ссылку», разовое действие,
+ * которое можно повторять. Репост — состояние: пост попадает во вкладку «Репосты»
+ * моего профиля и снимается повторным нажатием, поэтому пара (postId, userId) уникальна.
+ */
+model Repost {
+  id        String   @id @default(uuid())
+  postId    Int
+  userId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([userId, createdAt])
+  @@index([postId])
 }
 
 model Share {

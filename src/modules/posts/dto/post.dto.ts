@@ -307,11 +307,17 @@ export class PostDto {
   @ApiProperty({ example: 120 })
   viewsCount!: number;
 
+  @ApiProperty({ example: 7 })
+  repostsCount!: number;
+
   @ApiProperty({ example: false, description: 'Лайкнул ли Я' })
   isLiked!: boolean;
 
   @ApiProperty({ example: false, description: 'В избранном ли у меня' })
   isFavorited!: boolean;
+
+  @ApiProperty({ example: false, description: 'Репостнул ли Я (кнопка «двойная стрелка»)' })
+  isReposted!: boolean;
 
   @ApiPropertyOptional({
     example: false,
@@ -368,6 +374,14 @@ export class LikeToggleDto {
 export class FavoriteToggleDto {
   @ApiProperty({ example: true })
   favorited!: boolean;
+}
+
+export class RepostToggleDto {
+  @ApiProperty({ example: true, description: 'true — репостнул, false — репост снят' })
+  reposted!: boolean;
+
+  @ApiProperty({ example: 7 })
+  repostsCount!: number;
 }
 
 export class ViewDto {

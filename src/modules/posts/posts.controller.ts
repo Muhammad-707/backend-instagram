@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
@@ -46,6 +47,7 @@ import {
   PostDto,
   PostInsightsDto,
   ReportPostDto,
+  RepostToggleDto,
   ShareDto,
   ShareResultDto,
   TagActionDto,
@@ -411,6 +413,22 @@ export class PostsController {
     @Query('collection') collection?: string,
   ): Promise<FavoriteToggleDto> {
     return this.postsService.toggleFavorite(userId, id, collection);
+  }
+
+  @Post(':id/repost')
+  @ApiOperation({
+    summary: 'Репост (двойная стрелка): вкл/выкл',
+    description:
+      'Пост попадает во вкладку «Репосты» моего профиля; повторный вызов снимает репост. ' +
+      'Это НЕ «поделиться» — для отправки в чат/историю используйте POST /posts/{id}/share.',
+  })
+  @ApiOkResponse({ type: RepostToggleDto })
+  @ApiBadRequestResponse({ description: 'Нельзя репостить собственную публикацию' })
+  async repost(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<RepostToggleDto> {
+    return this.postsService.toggleRepost(userId, id);
   }
 
   @Post(':id/share')
