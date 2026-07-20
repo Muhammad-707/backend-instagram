@@ -960,7 +960,6 @@ export class PostsService {
     return { reposted: true, repostsCount };
   }
 
-
   async share(userId: string, postId: number, dto: ShareDto): Promise<ShareResultDto> {
     const post = await this.loadVisiblePost(userId, postId);
     const link = `${this.appUrl}/p/${postId}`;
